@@ -1,15 +1,54 @@
 import { Tabs } from 'expo-router';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-export default function AppTabs() {
+export default function TabLayout() {
     return (
         <Tabs
             screenOptions={{
                 headerShown: false,
-                tabBarActiveTintColor: '#7c3aed',   // purple-600
+                tabBarActiveTintColor: '#4f46e5',   // purple-500
+                tabBarStyle: { backgroundColor: '#fff' },
             }}
         >
-            <Tabs.Screen name="index" options={{ title: 'Home' }} />
-            <Tabs.Screen name="profile" options={{ title: 'Profile' }} />
+            <Tabs.Screen
+                name="index"
+                options={{
+                    title: 'Home',
+                    tabBarIcon: ({ color, size }) => (
+                        <MaterialCommunityIcons name="home-variant" color={color} size={size} />
+                    ),
+                }}
+            />
+
+            <Tabs.Screen
+                name="bookings"
+                options={{
+                    title: 'Bookings',
+                    tabBarIcon: ({ color, size }) => (
+                        <MaterialCommunityIcons name="calendar-clock" color={color} size={size} />
+                    ),
+                }}
+            />
+
+            <Tabs.Screen
+                name="community"
+                options={{
+                    title: 'Community',
+                    tabBarIcon: ({ color, size }) => (
+                        <MaterialCommunityIcons name="chat" color={color} size={size} />
+                    ),
+                }}
+            />
+
+            <Tabs.Screen
+                name="profile"
+                options={{
+                    title: 'Profile',
+                    tabBarIcon: ({ color, size }) => (
+                        <MaterialCommunityIcons name="account-circle" color={color} size={size} />
+                    ),
+                }}
+            />
         </Tabs>
     );
 }
