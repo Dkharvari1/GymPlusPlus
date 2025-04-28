@@ -13,6 +13,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
 import AuthCard from '../../ui/AuthCard';
+import { doc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../../lib/firebaseConfig';
 
 export default function LoginScreen() {
     const router = useRouter();
@@ -25,7 +27,17 @@ export default function LoginScreen() {
         setBusy(true);
         try {
             await login(email.trim(), pw);
-            router.replace('/(tabs)');
+            // after login, determine user role
+            const uid = auth.currentUser!.uid;
+            const userSnap = await getDoc(doc(db, 'users', uid));
+            const data = userSnap.exists() ? (userSnap.data() as any) : {};
+            if (data.role === 'business') {
+                // navigate to dashboard screen for gym owners
+                router.replace('/dashboard');
+            } else {
+                // navigate to main tabs for regular members
+                router.replace('/(tabs)');
+            }
         } catch (e: any) {
             Alert.alert('Login failed', e.message);
         } finally {
@@ -87,8 +99,7 @@ export default function LoginScreen() {
                         style={styles.switchLink}
                         onPress={() => router.push('/register')}
                     >
-                        {' '}
-                        Create account
+                        {' '}Create account
                     </Text>
                 </Text>
             </AuthCard>
@@ -117,6 +128,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginTop: 6,
         marginBottom: 16,
+        width: '100%',
     },
     btnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 

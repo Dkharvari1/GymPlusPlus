@@ -30,7 +30,7 @@ export default function TabLayout() {
         }}
       />
 
-      <Tabs.Screen
+      {/* <Tabs.Screen
         name="bookings"
         options={{
           title: 'Bookings',
@@ -38,7 +38,7 @@ export default function TabLayout() {
             <MaterialCommunityIcons name="calendar-clock" color={color} size={size} />
           ),
         }}
-      />
+      /> */}
 
       <Tabs.Screen
         name="community"
@@ -60,7 +60,7 @@ export default function TabLayout() {
         }}
       />
 
-      <Tabs.Screen
+      {/* <Tabs.Screen
         name="qr"
         options={{
           title: 'QR',
@@ -68,7 +68,7 @@ export default function TabLayout() {
             <MaterialCommunityIcons name="qrcode-scan" color={color} size={size} />
           ),
         }}
-      />
+      /> */}
 
       <Tabs.Screen
         name="profile"
