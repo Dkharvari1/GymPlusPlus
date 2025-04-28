@@ -1,133 +1,328 @@
-import React, { useEffect, useState } from 'react';
+/* ────────────────────────────────────────────────────────────────
+   app/(auth)/register.tsx
+   ─ Register a *member* (not a business owner)
+   ─ Keyboard stays open while typing (Row is memoised + extracted)
+   ─ Gym picker fits inside its own bar and never overlaps UI
+   ──────────────────────────────────────────────────────────────── */
+
+import React, { useState, useEffect } from 'react';
 import {
-    View, Text, TextInput, StyleSheet, ActivityIndicator, Alert,
-    KeyboardAvoidingView, Platform, Pressable, ScrollView,
+    View,
+    Text,
+    TextInput,
+    StyleSheet,
+    Pressable,
+    ActivityIndicator,
+    Alert,
+    Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
 import { useRouter } from 'expo-router';
-import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import {
-    collection, doc, getDocs, setDoc, serverTimestamp,
+    collection,
+    getDocs,
+    doc,
+    setDoc,
+    serverTimestamp,
 } from 'firebase/firestore';
-import { auth, db } from '../../lib/firebaseConfig';
+
+import { useAuth } from '../../context/AuthContext';
+import { db, auth } from '../../lib/firebaseConfig';
 import AuthCard from '../../ui/AuthCard';
 
+/* ──────────────────────────────────────────────────────────────── */
+/* 🔸 Text-input row (memoised)                                    */
+const Row = React.memo(
+    ({
+        icon,
+        value,
+        onChangeText,
+        placeholder,
+        keyboardType,
+        secureTextEntry,
+    }: {
+        icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
+        value: string;
+        onChangeText: (t: string) => void;
+        placeholder: string;
+        keyboardType?: 'default' | 'numeric' | 'email-address';
+        secureTextEntry?: boolean;
+    }) => (
+        <View style={styles.row}>
+            <MaterialCommunityIcons name={icon} size={22} color="#6b7280" />
+            <TextInput
+                style={styles.input}
+                placeholder={placeholder}
+                placeholderTextColor="#9ca3af"
+                value={value}
+                onChangeText={onChangeText}
+                keyboardType={keyboardType}
+                secureTextEntry={secureTextEntry}
+                autoCapitalize="none"
+            />
+        </View>
+    ),
+);
+
+/* 🔸 Gym-picker row (memoised)                                    */
+const GymPickerRow = React.memo(
+    ({
+        gyms,
+        gymId,
+        setGymId,
+        loading,
+    }: {
+        gyms: { id: string; name: string }[];
+        gymId: string;
+        setGymId: (v: string) => void;
+        loading: boolean;
+    }) => (
+        <View style={styles.rowPicker}>
+            <MaterialCommunityIcons name="dumbbell" size={22} color="#6b7280" />
+            {loading ? (
+                <ActivityIndicator style={{ flex: 1 }} color="#fff" />
+            ) : (
+                <Picker
+                    selectedValue={gymId}
+                    onValueChange={setGymId}
+                    style={styles.picker}
+                    dropdownIconColor="#fff"
+                    itemStyle={{ color: '#fff' }}
+                    mode={Platform.OS === 'ios' ? 'dialog' : 'dropdown'}
+                >
+                    <Picker.Item label="Select Gym" value="" color="#9ca3af" />
+                    {gyms.map(g => (
+                        <Picker.Item key={g.id} label={g.name} value={g.id} color="#fff" />
+                    ))}
+                </Picker>
+            )}
+        </View>
+    ),
+);
+
+/* ──────────────────────────────────────────────────────────────── */
 export default function RegisterMember() {
     const router = useRouter();
-    const [busy, setBusy] = useState(false);
+    const { register } = useAuth();
 
-    /* fields */
-    const [username, setUser] = useState('');
+    /* form state */
+    const [username, setUsername] = useState('');
     const [email, setEmail] = useState('');
-    const [height, setH] = useState('');
-    const [weight, setW] = useState('');
+    const [height, setHeight] = useState('');
+    const [weight, setWeight] = useState('');
     const [pw, setPw] = useState('');
+    const [busy, setBusy] = useState(false);
 
     /* gyms */
     const [gyms, setGyms] = useState<{ id: string; name: string }[]>([]);
-    const [gymId, setGym] = useState('loading');
+    const [gymId, setGymId] = useState('');
+    const [loadingGyms, setLoadingGyms] = useState(true);
 
+    /* fetch gyms once */
     useEffect(() => {
         (async () => {
             const snap = await getDocs(collection(db, 'gyms'));
-            const list = snap.docs.map(d => ({ id: d.id, name: d.data().name }));
-            list.push({ id: 'join', name: 'Get membership through the app' });
-            setGyms(list);
-            setGym(list[0]?.id ?? 'join');
+            setGyms(snap.docs.map(d => ({ id: d.id, name: (d.data() as any).name })));
+            setLoadingGyms(false);
         })();
     }, []);
 
-    const num = (s: string) => { const n = Number(s); return isNaN(n) ? null : n; };
-    const valid = () =>
-        username && email && num(height) !== null && num(weight) !== null && pw.length >= 6;
+    /* helpers */
+    const toNum = (v: string) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+    };
+    const isValid =
+        !!username &&
+        !!email &&
+        pw.length >= 6 &&
+        toNum(height) !== null &&
+        toNum(weight) !== null &&
+        !!gymId;
 
-    async function submit() {
-        if (!valid()) { Alert.alert('Fill all fields'); return; }
+    /* submit */
+    async function handleRegister() {
+        if (!isValid) {
+            Alert.alert('Please fill every field (password ≥ 6 characters).');
+            return;
+        }
         setBusy(true);
         try {
-            const cred = await createUserWithEmailAndPassword(auth, email.trim(), pw);
-            await updateProfile(cred.user, { displayName: username });
-            await setDoc(doc(db, 'users', cred.user.uid), {
-                uid: cred.user.uid, role: 'member',
-                username, email: email.trim(),
-                height: num(height), weight: num(weight),
-                gymId: gymId === 'join' ? null : gymId,
-                membershipRequested: gymId === 'join',
-                createdAt: serverTimestamp(),
-            });
+            /* auth */
+            await register(username, email.trim(), pw);
+
+            /* user profile */
+            const uid = auth.currentUser!.uid;
+            await setDoc(
+                doc(db, 'users', uid),
+                {
+                    height: toNum(height),
+                    weight: toNum(weight),
+                    gymId,
+                    updatedAt: serverTimestamp(),
+                },
+                { merge: true },
+            );
+
             router.replace('/(tabs)');
-        } catch (e: any) { Alert.alert('Error', e.message); }
-        finally { setBusy(false); }
+        } catch (err: any) {
+            Alert.alert('Registration failed', err.message);
+        } finally {
+            setBusy(false);
+        }
     }
 
-    const Input = (p: any) => (
-        <View key={p.placeholder} style={s.row}>
-            <MaterialCommunityIcons name={p.icon} size={22} color="#6b7280" />
-            <TextInput {...p} placeholderTextColor="#9ca3af" style={s.input} />
-        </View>
-    );
-
+    /* render */
     return (
-        <LinearGradient colors={['#312e81', '#4f46e5', '#7c3aed']} style={s.bg}>
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, width: '100%' }}>
-                <ScrollView keyboardShouldPersistTaps="always" contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}>
-                    <AuthCard>
-                        <Text style={s.title}>Create Account</Text>
+        <LinearGradient
+            colors={['#312e81', '#4f46e5', '#7c3aed']}
+            style={styles.bg}
+            start={{ x: 0.2, y: 0 }}
+            end={{ x: 0.8, y: 1 }}
+        >
+            <View style={styles.center}>
+                <AuthCard>
+                    <Text style={styles.title}>Create Account</Text>
 
-                        <Input icon="account-outline" placeholder="Username" value={username} onChangeText={setUser} />
-                        <Input icon="email-outline" placeholder="Email" keyboardType="email-address" autoCapitalize="none"
-                            value={email} onChangeText={setEmail} />
-                        <Input icon="human-male-height" placeholder="Height (cm)" keyboardType="numeric"
-                            value={height} onChangeText={setH} />
-                        <Input icon="scale-bathroom" placeholder="Weight (kg)" keyboardType="numeric"
-                            value={weight} onChangeText={setW} />
+                    <Row
+                        icon="account-outline"
+                        placeholder="Username"
+                        value={username}
+                        onChangeText={setUsername}
+                    />
+                    <Row
+                        icon="email-outline"
+                        placeholder="Email"
+                        keyboardType="email-address"
+                        value={email}
+                        onChangeText={setEmail}
+                    />
+                    <Row
+                        icon="human-male-height"
+                        placeholder="Height (cm)"
+                        keyboardType="numeric"
+                        value={height}
+                        onChangeText={setHeight}
+                    />
+                    <Row
+                        icon="scale-bathroom"
+                        placeholder="Weight (kg)"
+                        keyboardType="numeric"
+                        value={weight}
+                        onChangeText={setWeight}
+                    />
+                    <Row
+                        icon="lock-outline"
+                        placeholder="Password"
+                        secureTextEntry
+                        value={pw}
+                        onChangeText={setPw}
+                    />
 
-                        <Text style={s.label}>Select Gym</Text>
-                        <View style={s.pickerWrap}>
-                            {gyms.length === 0
-                                ? <ActivityIndicator color="#fff" />
-                                : (
-                                    <Picker selectedValue={gymId} style={s.picker} dropdownIconColor="#fff" onValueChange={setGym}>
-                                        {gyms.map(g => <Picker.Item key={g.id} label={g.name} value={g.id} color="#000" />)}
-                                    </Picker>
-                                )}
-                        </View>
+                    <GymPickerRow
+                        gyms={gyms}
+                        gymId={gymId}
+                        setGymId={setGymId}
+                        loading={loadingGyms}
+                    />
 
-                        <Input icon="lock-outline" placeholder="Password" secureTextEntry value={pw} onChangeText={setPw} />
+                    <Pressable
+                        style={[styles.btn, (!isValid || busy) && { opacity: 0.5 }]}
+                        onPress={handleRegister}
+                        disabled={!isValid || busy}
+                        android_ripple={{ color: '#ffffff22' }}
+                    >
+                        {busy ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : (
+                            <Text style={styles.btnTxt}>Sign Up</Text>
+                        )}
+                    </Pressable>
 
-                        <Pressable android_ripple={{ color: 'rgba(255,255,255,0.2)' }} style={s.btn} onPress={submit}>
-                            {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.btnTxt}>Sign Up</Text>}
-                        </Pressable>
+                    <Text style={styles.switchTxt}>
+                        Already have an account?
+                        <Text
+                            style={styles.switchLink}
+                            onPress={() => router.push('/login')}
+                        >
+                            {' '}Log in
+                        </Text>
+                    </Text>
 
-                        <Pressable onPress={() => router.push('/(auth)/registerGym')}>
-                            <Text style={s.alt}>Are you a gym?  Register here →</Text>
-                        </Pressable>
-
-                        <Pressable onPress={() => router.back()}>
-                            <Text style={s.alt}>Have an account?  Log in</Text>
-                        </Pressable>
-                    </AuthCard>
-                </ScrollView>
-            </KeyboardAvoidingView>
+                    <Pressable onPress={() => router.push('/(auth)/registerGym')}>
+                        <Text style={styles.alt}>Own a gym? Register your business</Text>
+                    </Pressable>
+                </AuthCard>
+            </View>
         </LinearGradient>
     );
 }
 
+/* ──────────────────────────────────────────────────────────────── */
 const PRIMARY = '#4f46e5';
-const s = StyleSheet.create({
-    bg: { flex: 1 },
-    title: { fontSize: 28, fontWeight: '700', color: '#fff', marginBottom: 24, textAlign: 'center' },
-    row: {
-        flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.25)',
-        borderRadius: 18, paddingHorizontal: 16, marginBottom: 16
+
+const styles = StyleSheet.create({
+    /* layout */
+    bg: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+    center: { width: '100%' },
+
+    /* text */
+    title: {
+        fontSize: 28,
+        fontWeight: '700',
+        color: '#fff',
+        marginBottom: 24,
+        textAlign: 'center',
     },
-    input: { flex: 1, height: 48, color: '#fff', marginLeft: 8, fontSize: 16 },
-    label: { color: '#d1d5db', marginBottom: 4, marginLeft: 4 },
-    pickerWrap: { backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 18, marginBottom: 16 },
-    picker: { color: '#fff' },
-    btn: { backgroundColor: PRIMARY, borderRadius: 18, paddingVertical: 14, alignItems: 'center', marginBottom: 16 },
+
+    /* shared row */
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.25)',
+        borderRadius: 18,
+        paddingHorizontal: 16,
+        marginBottom: 16,
+    },
+    /* text input inside row */
+    input: {
+        flex: 1,
+        height: 48,
+        color: '#fff',
+        marginLeft: 8,
+        fontSize: 16,
+    },
+
+    /* picker row (fixed height + clipping) */
+    rowPicker: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.25)',
+        borderRadius: 18,
+        paddingHorizontal: 16,
+        marginBottom: 16,
+        height: 48,
+        overflow: 'hidden',
+    },
+    picker: {
+        flex: 1,
+        color: '#fff',
+    },
+
+    /* button */
+    btn: {
+        backgroundColor: PRIMARY,
+        borderRadius: 18,
+        paddingVertical: 14,
+        alignItems: 'center',
+        marginBottom: 16,
+    },
     btnTxt: { color: '#fff', fontSize: 16, fontWeight: '600' },
-    alt: { textAlign: 'center', color: '#d1d5db', marginBottom: 6 },
+
+    /* footer links */
+    switchTxt: { textAlign: 'center', color: '#d1d5db' },
+    switchLink: { color: '#fff', fontWeight: '600' },
+    alt: { textAlign: 'center', color: '#d1d5db', marginBottom: 4 },
 });
