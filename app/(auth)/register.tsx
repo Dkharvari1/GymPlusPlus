@@ -1,10 +1,6 @@
 /* ────────────────────────────────────────────────────────────────
-   app/(auth)/register.tsx
-   ─ Register a *member* (not a business owner)
-   ─ Keyboard stays open while typing (Row is memoised + extracted)
-   ─ Gym picker fits inside its own bar and never overlaps UI
+   Register member (with avatar picker & gym selector)
    ──────────────────────────────────────────────────────────────── */
-
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -14,9 +10,11 @@ import {
     Pressable,
     ActivityIndicator,
     Alert,
+    Image,
     Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as ImagePicker from 'expo-image-picker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
 import { useRouter } from 'expo-router';
@@ -27,13 +25,37 @@ import {
     setDoc,
     serverTimestamp,
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { updateProfile } from 'firebase/auth';          // ← modular helper
 
 import { useAuth } from '../../context/AuthContext';
-import { db, auth } from '../../lib/firebaseConfig';
+import { db, auth, storage } from '../../lib/firebaseConfig';
 import AuthCard from '../../ui/AuthCard';
 
 /* ──────────────────────────────────────────────────────────────── */
-/* 🔸 Text-input row (memoised)                                    */
+/* Avatar picker */
+const AvatarPicker = ({
+    avatarUri,
+    onPick,
+}: {
+    avatarUri: string | null;
+    onPick: () => void;
+}) => (
+    <Pressable onPress={onPick} style={{ alignSelf: 'center' }}>
+        {avatarUri ? (
+            <Image source={{ uri: avatarUri }} style={styles.avatar} />
+        ) : (
+            <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                <MaterialCommunityIcons name="account" size={64} color="#94a3b8" />
+            </View>
+        )}
+        <View style={styles.cameraBadge}>
+            <MaterialCommunityIcons name="camera" size={20} color="#fff" />
+        </View>
+    </Pressable>
+);
+
+/* Text-input row */
 const Row = React.memo(
     ({
         icon,
@@ -66,7 +88,7 @@ const Row = React.memo(
     ),
 );
 
-/* 🔸 Gym-picker row (memoised)                                    */
+/* Gym picker row */
 const GymPickerRow = React.memo(
     ({
         gyms,
@@ -113,6 +135,7 @@ export default function RegisterMember() {
     const [height, setHeight] = useState('');
     const [weight, setWeight] = useState('');
     const [pw, setPw] = useState('');
+    const [avatarUri, setAvatarUri] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
     /* gyms */
@@ -120,7 +143,7 @@ export default function RegisterMember() {
     const [gymId, setGymId] = useState('');
     const [loadingGyms, setLoadingGyms] = useState(true);
 
-    /* fetch gyms once */
+    /* fetch gyms */
     useEffect(() => {
         (async () => {
             const snap = await getDocs(collection(db, 'gyms'));
@@ -140,31 +163,60 @@ export default function RegisterMember() {
         pw.length >= 6 &&
         toNum(height) !== null &&
         toNum(weight) !== null &&
-        !!gymId;
+        !!gymId &&
+        !!avatarUri;
+
+    /* pick avatar */
+    async function pickAvatar() {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) return;
+        const res = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.75,
+        });
+        if (!res.canceled) setAvatarUri(res.assets[0].uri);
+    }
+
+    /* upload avatar & return URL */
+    async function uploadAvatar(uid: string, uri: string): Promise<string> {
+        const blob = await (await fetch(uri)).blob();
+        const fileRef = ref(storage, `avatars/${uid}`);
+        await uploadBytes(fileRef, blob);
+        return await getDownloadURL(fileRef);
+    }
 
     /* submit */
     async function handleRegister() {
         if (!isValid) {
-            Alert.alert('Please fill every field (password ≥ 6 characters).');
+            Alert.alert('Please complete every field (avatar required).');
             return;
         }
         setBusy(true);
         try {
-            /* auth */
+            /* create auth account */
             await register(username, email.trim(), pw);
-
-            /* user profile */
             const uid = auth.currentUser!.uid;
+
+            /* upload avatar */
+            const photoURL = await uploadAvatar(uid, avatarUri!);
+
+            /* save extra profile info in Firestore */
             await setDoc(
                 doc(db, 'users', uid),
                 {
                     height: toNum(height),
                     weight: toNum(weight),
                     gymId,
+                    photoURL,
                     updatedAt: serverTimestamp(),
                 },
                 { merge: true },
             );
+
+            /* save photoURL on Auth user */
+            await updateProfile(auth.currentUser!, { photoURL });   // ← fixed
 
             router.replace('/(tabs)');
         } catch (err: any) {
@@ -185,6 +237,8 @@ export default function RegisterMember() {
             <View style={styles.center}>
                 <AuthCard>
                     <Text style={styles.title}>Create Account</Text>
+
+                    <AvatarPicker avatarUri={avatarUri} onPick={pickAvatar} />
 
                     <Row
                         icon="account-outline"
@@ -264,11 +318,9 @@ export default function RegisterMember() {
 const PRIMARY = '#4f46e5';
 
 const styles = StyleSheet.create({
-    /* layout */
     bg: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
     center: { width: '100%' },
 
-    /* text */
     title: {
         fontSize: 28,
         fontWeight: '700',
@@ -277,7 +329,28 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
 
-    /* shared row */
+    avatar: {
+        width: 120,
+        height: 120,
+        borderRadius: 60,
+        borderWidth: 3,
+        borderColor: 'rgba(255,255,255,0.45)',
+        marginBottom: 16,
+    },
+    avatarPlaceholder: {
+        backgroundColor: '#475569',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    cameraBadge: {
+        position: 'absolute',
+        bottom: 4,
+        right: 4,
+        backgroundColor: PRIMARY,
+        borderRadius: 12,
+        padding: 4,
+    },
+
     row: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -286,7 +359,6 @@ const styles = StyleSheet.create({
         paddingHorizontal: 16,
         marginBottom: 16,
     },
-    /* text input inside row */
     input: {
         flex: 1,
         height: 48,
@@ -295,7 +367,6 @@ const styles = StyleSheet.create({
         fontSize: 16,
     },
 
-    /* picker row (fixed height + clipping) */
     rowPicker: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -311,7 +382,6 @@ const styles = StyleSheet.create({
         color: '#fff',
     },
 
-    /* button */
     btn: {
         backgroundColor: PRIMARY,
         borderRadius: 18,
@@ -321,7 +391,6 @@ const styles = StyleSheet.create({
     },
     btnTxt: { color: '#fff', fontSize: 16, fontWeight: '600' },
 
-    /* footer links */
     switchTxt: { textAlign: 'center', color: '#d1d5db' },
     switchLink: { color: '#fff', fontWeight: '600' },
     alt: { textAlign: 'center', color: '#d1d5db', marginBottom: 4 },
