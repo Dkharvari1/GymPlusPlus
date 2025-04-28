@@ -19,15 +19,15 @@ import {
   query,
   where,
   orderBy,
-  limit,
   Timestamp,
+  limit,
 } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebaseConfig';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
 /* Apple Health (iOS) — guarded so Expo Go doesn’t crash */
 import AppleHealthKit, {
-  HealthkitPermissions,
+  // HealthkitPermissions,
   HealthInputOptions,
   HealthValue,
 } from 'react-native-health';
@@ -37,7 +37,7 @@ import QRCode from 'react-native-qrcode-svg';
 
 const { width } = Dimensions.get('window');
 const CARD = (width - 64) / 2;   // quick-action grid cards
-const METRIC = (width - 48) / 3;   // three health mini-cards
+const METRIC = (width - 48) / 3; // three health mini-cards
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -45,7 +45,7 @@ export default function HomeScreen() {
 
   /* live UI state */
   const [stats, setStats] = useState<{ steps?: number; calories?: number; minutes?: number }>({});
-  const [bookings, setBookings] = useState<any[]>([]);
+  const [bookings, setBookings] = useState<any[]>([]);  // show all bookings
   const [messages, setMessages] = useState<any[]>([]);
 
   /* wait for auth */
@@ -58,61 +58,48 @@ export default function HomeScreen() {
     /* health doc (optional server-side) */
     const today = new Date().toISOString().slice(0, 10);
     const healthId = `${today}_${user.uid}`;
-    const unsubHealth = onSnapshot(doc(db, 'health', healthId), s => {
-      if (s.exists()) setStats(p => ({ ...p, ...(s.data() as any) }));
-    });
+    const unsubHealth = onSnapshot(
+      doc(db, 'health', healthId),
+      s => {
+        if (s.exists()) setStats(p => ({ ...p, ...(s.data() as any) }));
+      },
+      e => console.warn('health query error', e)
+    );
 
-    /* upcoming bookings (next 3) */
-    const nowTS = Timestamp.now();
+    /* all bookings */
     const qBook = query(
       collection(db, 'bookings'),
       where('userId', '==', user.uid),
-      where('start', '>=', nowTS),
-      orderBy('start'),
-      limit(3)
+      orderBy('start')
     );
-    const unsubBook = onSnapshot(qBook, s =>
-      setBookings(s.docs.map(d => ({ id: d.id, ...d.data() })))
+    const unsubBook = onSnapshot(
+      qBook,
+      s => setBookings(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+      e => console.warn('bookings query error', e)
     );
 
     /* community messages (latest 3) */
     const unsubMsg = onSnapshot(
       query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(3)),
-      s => setMessages(s.docs.map(d => ({ id: d.id, ...d.data() })))
+      s => setMessages(s.docs.map(d => ({ id: d.id, ...d.data() }))),
+      e => console.warn('messages query error', e)
     );
 
-    return () => { unsubHealth(); unsubBook(); unsubMsg(); };
+    return () => {
+      unsubHealth();
+      unsubBook();
+      unsubMsg();
+    };
   }, [user]);
 
   /* Apple Health fetch (iOS builds only) */
   const fetchHealth = useCallback(() => {
     if (Platform.OS !== 'ios' || !AppleHealthKit?.initHealthKit) return;
-
-    const perms: HealthkitPermissions = {
-      permissions: {
-        read: [
-          AppleHealthKit.Constants.Permissions.StepCount,
-          AppleHealthKit.Constants.Permissions.ActiveEnergyBurned,
-          AppleHealthKit.Constants.Permissions.AppleExerciseTime,
-        ],
-        write: [],
-      },
-    };
-
-    AppleHealthKit.initHealthKit(perms, err => {
-      if (err) return console.warn('HealthKit init error', err);
-      const opts: HealthInputOptions = { date: new Date().toISOString() };
-
-      AppleHealthKit.getStepCount(opts, (_e: string, r: HealthValue) =>
-        r?.value !== undefined && setStats(p => ({ ...p, steps: Math.round(r.value) }))
-      );
-      AppleHealthKit.getActiveEnergyBurned(opts, (_e, r) =>
-        r?.value !== undefined && setStats(p => ({ ...p, calories: Math.round(r.value) }))
-      );
-      AppleHealthKit.getAppleExerciseTime(opts, (_e, r) =>
-        r?.value !== undefined && setStats(p => ({ ...p, minutes: Math.round(r.value) }))
-      );
-    });
+    // HealthKit code is commented out for now
+    // const perms: HealthkitPermissions = {
+    //   permissions: { read: [...], write: [] }
+    // };
+    // AppleHealthKit.initHealthKit(perms, err => { ... });
   }, []);
   useEffect(fetchHealth, [fetchHealth]);
 
@@ -122,15 +109,11 @@ export default function HomeScreen() {
   const hr = new Date().getHours();
   const hi = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
 
-  /* quick-action grid (bookings FAB below) */
-  const actions = [
-    { icon: 'dumbbell', label: 'Start Workout', path: '/workout' },
-    { icon: 'food-apple', label: 'Nutrition Log', path: '/nutrition' },
-    { icon: 'chat', label: 'Community', path: '/chat' },
-  ];
-
   return (
-    <LinearGradient colors={['#7c3aed', '#4f46e5', '#312e81']} style={styles.bg}>
+    <LinearGradient
+      colors={['#7c3aed', '#4f46e5', '#312e81']}
+      style={styles.bg}
+    >
       {/* header */}
       <Text style={styles.hi}>{hi}, {user.displayName ?? 'Athlete'} 👋</Text>
       <Text style={styles.sub}>Here’s your snapshot today</Text>
@@ -144,9 +127,7 @@ export default function HomeScreen() {
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {/* bookings section */}
-        <Section title="Upcoming Bookings"
-          actionLabel="Reserve"
-          onAction={() => router.push('/bookings')}>
+        <Section title="All Bookings">
           {bookings.length
             ? bookings.map(b => (
               <Line key={b.id}
@@ -154,7 +135,7 @@ export default function HomeScreen() {
                 title={b.title ?? 'Gym Booking'}
                 sub={tsToStr(b.start)} />
             ))
-            : <Empty text="No upcoming bookings" />}
+            : <Empty text="No bookings yet" />}
         </Section>
 
         {/* community section */}
@@ -170,7 +151,7 @@ export default function HomeScreen() {
         </Section>
 
         {/* quick-action grid */}
-        <View style={styles.grid}>
+        {/* <View style={styles.grid}>
           {actions.map(a => (
             <Pressable key={a.label}
               style={styles.card}
@@ -180,7 +161,7 @@ export default function HomeScreen() {
               <Text style={styles.cardTxt}>{a.label}</Text>
             </Pressable>
           ))}
-        </View>
+        </View> */}
       </ScrollView>
 
       {/* FAB – QR code */}
@@ -200,7 +181,7 @@ export default function HomeScreen() {
   );
 }
 
-/* ─── small components ─── */
+/* small components */
 const Metric = ({ icon, label, value }: any) => (
   <View style={styles.metric}>
     <MaterialCommunityIcons name={icon} size={22} color="#fff" />
@@ -211,16 +192,9 @@ const Metric = ({ icon, label, value }: any) => (
   </View>
 );
 
-const Section = ({ title, children, actionLabel, onAction }: any) => (
+const Section = ({ title, children }: any) => (
   <View style={{ marginTop: 32 }}>
-    <View style={styles.secHeader}>
-      <Text style={styles.secTitle}>{title}</Text>
-      {actionLabel && (
-        <Pressable onPress={onAction}>
-          <Text style={styles.secAction}>{actionLabel}</Text>
-        </Pressable>
-      )}
-    </View>
+    <Text style={styles.secTitle}>{title}</Text>
     {children}
   </View>
 );
@@ -246,7 +220,7 @@ const tsToStr = (ts: Timestamp) =>
     day: 'numeric',
   });
 
-/* ─── styles ─── */
+/* styles */
 const styles = StyleSheet.create({
   bg: { flex: 1, paddingTop: 60, paddingHorizontal: 24 },
   hi: { color: '#fff', fontSize: 28, fontWeight: '700' },
@@ -263,74 +237,30 @@ const styles = StyleSheet.create({
   metricVal: { color: '#fff', fontSize: 22, fontWeight: '700', marginVertical: 4 },
   metricLbl: { color: '#c7d2fe', fontSize: 12 },
 
-  secHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  secTitle: { color: '#cbd5e1', fontSize: 15, fontWeight: '600' },
-  secAction: { color: '#4f46e5', fontSize: 14, fontWeight: '600' },
+  secTitle: { color: '#cbd5e1', fontSize: 15, fontWeight: '600', marginBottom: 12 },
 
   lineItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 18,
-    padding: 12,
-    marginBottom: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff', borderRadius: 18, padding: 12, marginBottom: 10,
+    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 3 },
   },
   lineTitle: { fontWeight: '600', color: '#1e293b' },
   lineSub: { color: '#64748b', fontSize: 13, marginTop: 2 },
 
-  empty: { color: '#94a3b8', fontStyle: 'italic', marginBottom: 4 },
+  empty: { color: '#94a3b8', fontStyle: 'italic', marginBottom: 4, textAlign: 'center' },
 
-  grid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 24, paddingBottom: 90 },
-  card: {
-    width: CARD,
-    height: CARD,
-    margin: 8,
-    backgroundColor: '#fff',
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-  },
-  cardTxt: { marginTop: 8, fontSize: 15, fontWeight: '600', color: '#4f46e5', textAlign: 'center' },
-
-  /* floating buttons */
   fabQR: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
+    position: 'absolute', bottom: 24, right: 24,
+    width: 72, height: 72, borderRadius: 36, backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center',
+    elevation: 4, shadowColor: '#000', shadowOpacity: 0.15,
+    shadowRadius: 8, shadowOffset: { width: 0, height: 4 },
   },
   fabBook: {
-    position: 'absolute',
-    bottom: 110,           /* 72 + 14 + shadow gap */
-    right: 24,
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
+    position: 'absolute', bottom: 110, right: 24,
+    width: 72, height: 72, borderRadius: 36, backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center',
+    elevation: 4, shadowColor: '#000', shadowOpacity: 0.15,
+    shadowRadius: 8, shadowOffset: { width: 0, height: 4 },
   },
 });

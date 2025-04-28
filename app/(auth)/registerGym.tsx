@@ -1,4 +1,3 @@
-// app/(auth)/registerGym.tsx
 import React, { useState } from 'react';
 import {
     View,
@@ -28,8 +27,7 @@ import { useRouter } from 'expo-router';
 import { auth, db } from '../../lib/firebaseConfig';
 import AuthCard from '../../ui/AuthCard';
 
-/* ──────────────────────────────────────────────────────────────── */
-/* 🔸 Row (memoised)                                               */
+/* 🔸 Row (memoised) */
 type RowProps = {
     icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
     placeholder: string;
@@ -66,7 +64,6 @@ const Row = React.memo(
     ),
 );
 
-/* ──────────────────────────────────────────────────────────────── */
 export default function RegisterGym() {
     const router = useRouter();
     const [busy, setBusy] = useState(false);
@@ -79,7 +76,6 @@ export default function RegisterGym() {
 
     const valid = () => name && email && phone && pw.length >= 6;
 
-    /* submit handler */
     async function submit() {
         if (!valid()) {
             Alert.alert('Fill every field (password ≥ 6 characters)');
@@ -87,17 +83,16 @@ export default function RegisterGym() {
         }
         setBusy(true);
         try {
-            /* 1️⃣ create Firebase Auth user */
+            // 1️⃣ Create Firebase Auth user
             const cred = await createUserWithEmailAndPassword(
                 auth,
                 email.trim(),
                 pw,
             );
             await updateProfile(cred.user, { displayName: name });
-
             const uid = cred.user.uid;
 
-            /* 2️⃣ create (or merge) user doc with role=business */
+            // 2️⃣ Create or merge user doc with role=business
             await setDoc(
                 doc(db, 'users', uid),
                 {
@@ -110,7 +105,7 @@ export default function RegisterGym() {
                 { merge: true },
             );
 
-            /* 3️⃣ now, rules see role == "business": add gym doc */
+            // 3️⃣ Add gym doc
             const gymRef = await addDoc(collection(db, 'gyms'), {
                 name,
                 ownerUid: uid,
@@ -119,13 +114,14 @@ export default function RegisterGym() {
                 createdAt: serverTimestamp(),
             });
 
-            /* 4️⃣ update user doc with gymId / gymName (merge) */
+            // 4️⃣ Update user doc with gymId/gymName
             await updateDoc(doc(db, 'users', uid), {
                 gymId: gymRef.id,
                 gymName: name,
             });
 
-            router.replace('/(tabs)');
+            // Navigate gym owners to their dashboard
+            router.replace('/dashboard');
         } catch (err: any) {
             Alert.alert('Error', err.message);
         } finally {
@@ -133,7 +129,6 @@ export default function RegisterGym() {
         }
     }
 
-    /* render */
     return (
         <LinearGradient
             colors={['#312e81', '#4f46e5', '#7c3aed']}
@@ -196,9 +191,7 @@ export default function RegisterGym() {
     );
 }
 
-/* ──────────────────────────────────────────────────────────────── */
 const PRIMARY = '#4f46e5';
-
 const styles = StyleSheet.create({
     bg: { flex: 1 },
     center: { flex: 1, justifyContent: 'center', padding: 24 },
