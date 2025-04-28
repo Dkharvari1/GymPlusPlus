@@ -1,26 +1,30 @@
 import React, { useState } from 'react';
 import {
-    View, Text, TextInput,
-    StyleSheet, ActivityIndicator, Alert,
+    View,
+    Text,
+    TextInput,
+    StyleSheet,
+    ActivityIndicator,
+    Alert,
+    Pressable,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { RectButton } from 'react-native-gesture-handler';
 import { useRouter } from 'expo-router';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '../../lib/firebaseConfig';
+import { useAuth } from '../../context/AuthContext';
 import AuthCard from '../../ui/AuthCard';
 
 export default function LoginScreen() {
     const router = useRouter();
+    const { login } = useAuth();
     const [email, setEmail] = useState('');
     const [pw, setPw] = useState('');
     const [busy, setBusy] = useState(false);
 
-    async function login() {
+    async function handleLogin() {
         setBusy(true);
         try {
-            await signInWithEmailAndPassword(auth, email.trim(), pw);
+            await login(email.trim(), pw);
             router.replace('/(tabs)');
         } catch (e: any) {
             Alert.alert('Login failed', e.message);
@@ -33,12 +37,12 @@ export default function LoginScreen() {
         <LinearGradient
             colors={['#7c3aed', '#4f46e5', '#312e81']}
             style={styles.bg}
-            start={{ x: 0.2, y: 0 }} end={{ x: 0.8, y: 1 }}
+            start={{ x: 0.2, y: 0 }}
+            end={{ x: 0.8, y: 1 }}
         >
             <AuthCard>
                 <Text style={styles.title}>Welcome Back</Text>
 
-                {/* email */}
                 <View style={styles.inputWrap}>
                     <MaterialCommunityIcons name="email-outline" size={22} color="#6b7280" />
                     <TextInput
@@ -52,7 +56,6 @@ export default function LoginScreen() {
                     />
                 </View>
 
-                {/* password */}
                 <View style={styles.inputWrap}>
                     <MaterialCommunityIcons name="lock-outline" size={22} color="#6b7280" />
                     <TextInput
@@ -65,19 +68,28 @@ export default function LoginScreen() {
                     />
                 </View>
 
-                {/* primary button */}
-                <RectButton rippleColor="#e0e7ff" style={styles.btn} onPress={login} enabled={!busy}>
+                <Pressable
+                    style={styles.btn}
+                    onPress={handleLogin}
+                    disabled={busy}
+                    android_ripple={{ color: '#e0e7ff' }}
+                >
                     {busy ? (
                         <ActivityIndicator color="#fff" />
                     ) : (
                         <Text style={styles.btnText}>Log In</Text>
                     )}
-                </RectButton>
+                </Pressable>
 
-                {/* switch */}
                 <Text style={styles.switchTxt}>
                     New here?
-                    <Text style={styles.switchLink} onPress={() => router.push('/(auth)/register')}>  Create account</Text>
+                    <Text
+                        style={styles.switchLink}
+                        onPress={() => router.push('/register')}
+                    >
+                        {' '}
+                        Create account
+                    </Text>
                 </Text>
             </AuthCard>
         </LinearGradient>
