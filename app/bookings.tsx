@@ -133,7 +133,7 @@ export default function BookingsScreen() {
         //     console.log("Alert!");
         //     return;
         // }
-        console.log("here3");
+        // console.log("here3");
 
 
         try {
