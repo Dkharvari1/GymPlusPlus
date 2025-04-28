@@ -1,0 +1,294 @@
+[
+  {
+    "name": "Incline Dumbbell Press",
+    "difficulty": "intermediate",
+    "bodyParts": [
+      "chest",
+      "shoulders"
+    ],
+    "equipment": [
+      "dumbbells",
+      "bench"
+    ],
+    "goals": [
+      "build muscle",
+      "strength"
+    ],
+    "steps": [
+      "Set bench to 30\u201345\u00b0 incline.",
+      "Press dumbbells overhead at slight angle.",
+      "Lower until elbows are at 90\u00b0, then press up."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Machine Chest Press",
+    "difficulty": "beginner",
+    "bodyParts": [
+      "chest"
+    ],
+    "equipment": [
+      "machine"
+    ],
+    "goals": [
+      "build muscle"
+    ],
+    "steps": [
+      "Adjust seat so handles are chest height.",
+      "Push handles forward until arms are extended.",
+      "Control back to starting position."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Deadlift",
+    "difficulty": "advanced",
+    "bodyParts": [
+      "back",
+      "glutes",
+      "hamstrings"
+    ],
+    "equipment": [
+      "barbell"
+    ],
+    "goals": [
+      "strength",
+      "power"
+    ],
+    "steps": [
+      "Stand with mid-foot under barbell.",
+      "Hinge hips back and grip bar just outside knees.",
+      "Drive hips forward and lift bar standing tall."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Cable Lateral Raise",
+    "difficulty": "intermediate",
+    "bodyParts": [
+      "shoulders"
+    ],
+    "equipment": [
+      "cable machine"
+    ],
+    "goals": [
+      "hypertrophy"
+    ],
+    "steps": [
+      "Set cable to lowest setting with single handle.",
+      "Raise arm to side until shoulder height.",
+      "Lower slowly with control."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "EZ Bar Curl",
+    "difficulty": "beginner",
+    "bodyParts": [
+      "biceps"
+    ],
+    "equipment": [
+      "EZ bar"
+    ],
+    "goals": [
+      "build muscle"
+    ],
+    "steps": [
+      "Hold EZ bar with palms facing up.",
+      "Curl bar toward shoulders without swinging.",
+      "Lower slowly."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Dips",
+    "difficulty": "intermediate",
+    "bodyParts": [
+      "triceps",
+      "chest"
+    ],
+    "equipment": [
+      "dip bars"
+    ],
+    "goals": [
+      "build muscle"
+    ],
+    "steps": [
+      "Grasp parallel bars, lower body by bending elbows.",
+      "Push back up to lockout.",
+      "Keep torso leaning slightly forward."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Goblet Squat",
+    "difficulty": "beginner",
+    "bodyParts": [
+      "quads",
+      "glutes"
+    ],
+    "equipment": [
+      "dumbbell"
+    ],
+    "goals": [
+      "build muscle",
+      "mobility"
+    ],
+    "steps": [
+      "Hold a dumbbell close to chest.",
+      "Squat down keeping chest upright.",
+      "Drive through heels to stand up."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Walking Lunges",
+    "difficulty": "intermediate",
+    "bodyParts": [
+      "quads",
+      "glutes",
+      "hamstrings"
+    ],
+    "equipment": [
+      "dumbbells"
+    ],
+    "goals": [
+      "build muscle",
+      "conditioning"
+    ],
+    "steps": [
+      "Hold dumbbells at sides.",
+      "Step forward and lower until back knee nearly touches ground.",
+      "Push through front heel and repeat on other side."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Bulgarian Split Squat",
+    "difficulty": "advanced",
+    "bodyParts": [
+      "quads",
+      "glutes"
+    ],
+    "equipment": [
+      "bench",
+      "dumbbells"
+    ],
+    "goals": [
+      "build muscle",
+      "mobility"
+    ],
+    "steps": [
+      "Place rear foot on bench behind you.",
+      "Lower front thigh until parallel.",
+      "Drive through front foot to return."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Mountain Climbers",
+    "difficulty": "beginner",
+    "bodyParts": [
+      "core",
+      "cardio"
+    ],
+    "equipment": [
+      "bodyweight"
+    ],
+    "goals": [
+      "conditioning"
+    ],
+    "steps": [
+      "Start in plank position.",
+      "Drive knees alternately toward chest.",
+      "Maintain fast pace with tight core."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Farmer's Carry",
+    "difficulty": "beginner",
+    "bodyParts": [
+      "grip",
+      "core",
+      "full body"
+    ],
+    "equipment": [
+      "dumbbells",
+      "kettlebells"
+    ],
+    "goals": [
+      "grip strength",
+      "conditioning"
+    ],
+    "steps": [
+      "Hold heavy weights at sides.",
+      "Walk forward keeping shoulders back.",
+      "Maintain tight core throughout."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Medicine Ball Slam",
+    "difficulty": "intermediate",
+    "bodyParts": [
+      "full body",
+      "cardio"
+    ],
+    "equipment": [
+      "medicine ball"
+    ],
+    "goals": [
+      "conditioning",
+      "power"
+    ],
+    "steps": [
+      "Lift ball overhead with arms extended.",
+      "Slam ball down into ground as hard as possible.",
+      "Squat to pick up and repeat."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Pallof Press",
+    "difficulty": "intermediate",
+    "bodyParts": [
+      "core"
+    ],
+    "equipment": [
+      "cable machine",
+      "resistance band"
+    ],
+    "goals": [
+      "core stability"
+    ],
+    "steps": [
+      "Hold cable/band at chest height.",
+      "Press hands forward resisting rotation.",
+      "Hold for a beat and bring hands back."
+    ],
+    "videoURL": ""
+  },
+  {
+    "name": "Face Pull",
+    "difficulty": "intermediate",
+    "bodyParts": [
+      "shoulders",
+      "upper back"
+    ],
+    "equipment": [
+      "cable machine",
+      "rope attachment"
+    ],
+    "goals": [
+      "shoulder health",
+      "posture"
+    ],
+    "steps": [
+      "Set rope attachment at face height.",
+      "Pull rope towards face, elbows flared out.",
+      "Squeeze upper back muscles."
+    ],
+    "videoURL": ""
+  }
+]
