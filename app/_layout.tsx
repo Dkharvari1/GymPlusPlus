@@ -6,8 +6,9 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../lib/firebaseConfig';
 //import { useNutritionStore } from '../lib/store/useNutritionStore';
 
+import { AuthProvider } from '../context/AuthContext';
 
-SplashScreen.preventAutoHideAsync();      // (optional) keep native splash up
+SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
@@ -16,12 +17,7 @@ export default function RootLayout() {
   const segments = useSegments();
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, u => {
-      setUser(u);
-      setReady(true);
-      SplashScreen.hideAsync();
-    });
-    return unsub;
+    (async () => { await SplashScreen.hideAsync(); })();
   }, []);
 
   // <==== ADD THIS HERE ====
@@ -39,9 +35,9 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <Stack screenOptions={{ headerShown: false }}>
+      <AuthProvider>
         <Slot />
-      </Stack>
+      </AuthProvider>
     </GestureHandlerRootView>
   );
 }
