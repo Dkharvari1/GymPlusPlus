@@ -218,7 +218,7 @@ export default function RegisterMember() {
             /* save photoURL on Auth user */
             await updateProfile(auth.currentUser!, { photoURL });   // ← fixed
 
-            router.replace('/(tabs)');
+            router.replace('/(auth)/goalSetup');
         } catch (err: any) {
             Alert.alert('Registration failed', err.message);
         } finally {
