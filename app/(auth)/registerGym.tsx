@@ -49,13 +49,14 @@ const SERVICES = [
     { key: 'massage', label: 'Massage Therapy' },
 ];
 
-const COURT_TYPES = [
+// initial, built-in court types
+const INITIAL_COURTS = [
     { key: 'basketball', label: 'Basketball Courts' },
     { key: 'pickleball', label: 'Pickleball Courts' },
     { key: 'racquetball', label: 'Racquetball Courts' },
 ];
 
-// 🔸 Row (memoised)
+// memoized row input
 type RowProps = {
     icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
     placeholder: string;
@@ -99,7 +100,7 @@ export default function RegisterGym() {
     const [phone, setPhone] = useState('');
     const [pw, setPw] = useState('');
 
-    /* hours state */
+    /* business hours */
     const [hours, setHours] = useState(
         DAYS.reduce(
             (acc, d) => ({ ...acc, [d]: { open: '', close: '' } }),
@@ -110,12 +111,14 @@ export default function RegisterGym() {
     /* services */
     const [services, setServices] = useState<string[]>([]);
 
-    /* courts */
+    /* court types & counts */
+    const [courtTypes, setCourtTypes] = useState(INITIAL_COURTS);
     const [courts, setCourts] = useState(
-        COURT_TYPES.reduce((acc, c) => ({ ...acc, [c.key]: '0' }), {} as Record<string, string>)
+        INITIAL_COURTS.reduce((acc, c) => ({ ...acc, [c.key]: '0' }), {} as Record<string, string>)
     );
+    const [newCourtLabel, setNewCourtLabel] = useState('');
 
-    /* picker control */
+    /* time picker control */
     const [pickerVisible, setPickerVisible] = useState(false);
     const [pickerDay, setPickerDay] = useState<string>(DAYS[0]);
     const [pickerMode, setPickerMode] = useState<'open' | 'close'>('open');
@@ -136,13 +139,10 @@ export default function RegisterGym() {
         setPickerVisible(true);
     };
 
-    /* time spin */
     const onTimeChange = (_: any, selected?: Date) => {
         if (selected) setTempTime(selected);
     };
-
     const cancelPicker = () => setPickerVisible(false);
-
     const confirmPicker = () => {
         const hh = tempTime.getHours().toString().padStart(2, '0');
         const mm = tempTime.getMinutes().toString().padStart(2, '0');
@@ -160,10 +160,22 @@ export default function RegisterGym() {
         );
     };
 
-    /* submit */
+    /* add a brand-new court type */
+    const addCourtType = () => {
+        const label = newCourtLabel.trim();
+        if (!label) return Alert.alert('Enter a court name first');
+        const key = label.toLowerCase().replace(/\s+/g, '_');
+        if (courtTypes.some(c => c.key === key))
+            return Alert.alert('That court type already exists');
+        setCourtTypes(ct => [...ct, { key, label }]);
+        setCourts(c => ({ ...c, [key]: '0' }));
+        setNewCourtLabel('');
+    };
+
+    /* submit all */
     async function submit() {
         if (!valid()) {
-            Alert.alert('All fields + password≥6 required.');
+            Alert.alert('All fields + password ≥ 6 required.');
             return;
         }
         setBusy(true);
@@ -204,7 +216,7 @@ export default function RegisterGym() {
                 createdAt: serverTimestamp(),
             });
 
-            // 4️⃣ link
+            // 4️⃣ link user → gym
             await updateDoc(doc(db, 'users', uid), {
                 gymId: gymRef.id,
                 gymName: name,
@@ -229,60 +241,27 @@ export default function RegisterGym() {
                 <AuthCard>
                     <Text style={styles.title}>Register Gym</Text>
 
-                    <Row
-                        icon="office-building-marker"
-                        placeholder="Gym Name"
-                        value={name}
-                        onChangeText={setName}
-                    />
-                    <Row
-                        icon="email-outline"
-                        placeholder="Business Email"
-                        keyboardType="email-address"
-                        autoCapitalize="none"
-                        value={email}
-                        onChangeText={setEmail}
-                    />
-                    <Row
-                        icon="phone"
-                        placeholder="Phone Number"
-                        keyboardType="phone-pad"
-                        value={phone}
-                        onChangeText={setPhone}
-                    />
-                    <Row
-                        icon="lock-outline"
-                        placeholder="Password"
-                        secureTextEntry
-                        value={pw}
-                        onChangeText={setPw}
-                    />
+                    {/* ── Basic Info ── */}
+                    <Row icon="office-building-marker" placeholder="Gym Name" value={name} onChangeText={setName} />
+                    <Row icon="email-outline" placeholder="Business Email" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
+                    <Row icon="phone" placeholder="Phone Number" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+                    <Row icon="lock-outline" placeholder="Password" secureTextEntry value={pw} onChangeText={setPw} />
 
-                    {/* ─── Hours ─── */}
+                    {/* ── Hours ── */}
                     <Text style={styles.sectionTitle}>Business Hours</Text>
                     {DAYS.map(day => (
                         <View key={day} style={styles.hoursRow}>
                             <Text style={styles.dayLabel}>{day.slice(0, 3)}</Text>
-                            <Pressable
-                                style={styles.timeBtn}
-                                onPress={() => openPicker(day, 'open')}
-                            >
-                                <Text style={styles.timeTxt}>
-                                    {hours[day].open || '--:--'}
-                                </Text>
+                            <Pressable style={styles.timeBtn} onPress={() => openPicker(day, 'open')}>
+                                <Text style={styles.timeTxt}>{hours[day].open || '--:--'}</Text>
                             </Pressable>
-                            <Pressable
-                                style={styles.timeBtn}
-                                onPress={() => openPicker(day, 'close')}
-                            >
-                                <Text style={styles.timeTxt}>
-                                    {hours[day].close || '--:--'}
-                                </Text>
+                            <Pressable style={styles.timeBtn} onPress={() => openPicker(day, 'close')}>
+                                <Text style={styles.timeTxt}>{hours[day].close || '--:--'}</Text>
                             </Pressable>
                         </View>
                     ))}
 
-                    {/* ─── Services ─── */}
+                    {/* ── Services ── */}
                     <Text style={styles.sectionTitle}>Services Offered</Text>
                     <View style={styles.servicesRow}>
                         {SERVICES.map(s => {
@@ -301,9 +280,23 @@ export default function RegisterGym() {
                         })}
                     </View>
 
-                    {/* ─── Courts ─── */}
+                    {/* ── Courts ── */}
                     <Text style={styles.sectionTitle}>Courts Available</Text>
-                    {COURT_TYPES.map(c => (
+                    {/* 1) ability to add a new court type */}
+                    <View style={styles.newCourtRow}>
+                        <TextInput
+                            style={styles.newCourtInput}
+                            placeholder="e.g. Tennis Courts"
+                            placeholderTextColor="#ccc"
+                            value={newCourtLabel}
+                            onChangeText={setNewCourtLabel}
+                        />
+                        <Pressable style={styles.addCourtBtn} onPress={addCourtType}>
+                            <MaterialCommunityIcons name="plus" size={24} color="#fff" />
+                        </Pressable>
+                    </View>
+                    {/* 2) for each court type, pick a quantity 0–10 */}
+                    {courtTypes.map(c => (
                         <View key={c.key} style={styles.courtRow}>
                             <Text style={styles.dayLabel}>{c.label}</Text>
                             <Picker
@@ -320,7 +313,7 @@ export default function RegisterGym() {
                         </View>
                     ))}
 
-                    {/* time picker modal */}
+                    {/* ── Time Picker Modal ── */}
                     {pickerVisible && (
                         <Modal transparent animationType="fade">
                             <View style={styles.modalOverlay}>
@@ -334,16 +327,10 @@ export default function RegisterGym() {
                                         style={{ width: '100%' }}
                                     />
                                     <View style={styles.pickerActions}>
-                                        <Pressable
-                                            style={styles.pickerActionBtn}
-                                            onPress={cancelPicker}
-                                        >
+                                        <Pressable style={styles.pickerActionBtn} onPress={cancelPicker}>
                                             <Text style={styles.pickerActionTxt}>Cancel</Text>
                                         </Pressable>
-                                        <Pressable
-                                            style={styles.pickerActionBtn}
-                                            onPress={confirmPicker}
-                                        >
+                                        <Pressable style={styles.pickerActionBtn} onPress={confirmPicker}>
                                             <Text style={styles.pickerActionTxt}>Confirm</Text>
                                         </Pressable>
                                     </View>
@@ -352,17 +339,17 @@ export default function RegisterGym() {
                         </Modal>
                     )}
 
+                    {/* ── Submit ── */}
                     <Pressable
                         style={[styles.btn, busy && { opacity: 0.5 }]}
                         onPress={submit}
                         disabled={busy}
                         android_ripple={{ color: '#ffffff22' }}
                     >
-                        {busy ? (
-                            <ActivityIndicator color="#fff" />
-                        ) : (
-                            <Text style={styles.btnTxt}>Sign Up</Text>
-                        )}
+                        {busy
+                            ? <ActivityIndicator color="#fff" />
+                            : <Text style={styles.btnTxt}>Sign Up</Text>
+                        }
                     </Pressable>
                     <Pressable onPress={() => router.push('/(auth)/register')}>
                         <Text style={styles.alt}>Register as Member instead</Text>
@@ -379,127 +366,88 @@ const styles = StyleSheet.create({
     bg: { flex: 1 },
     center: { padding: 24, paddingTop: 40, paddingBottom: 80 },
     title: {
-        fontSize: 28,
-        fontWeight: '700',
-        color: '#fff',
-        marginBottom: 24,
-        textAlign: 'center',
+        fontSize: 28, fontWeight: '700', color: '#fff',
+        marginBottom: 24, textAlign: 'center'
     },
     row: {
-        flexDirection: 'row',
-        alignItems: 'center',
+        flexDirection: 'row', alignItems: 'center',
         backgroundColor: 'rgba(255,255,255,0.25)',
-        borderRadius: 18,
-        paddingHorizontal: 16,
-        marginBottom: 16,
-        height: 48,
+        borderRadius: 18, paddingHorizontal: 16,
+        marginBottom: 16, height: 48
     },
-    input: {
-        flex: 1,
-        color: '#fff',
-        marginLeft: 8,
-        fontSize: 16,
-    },
+    input: { flex: 1, color: '#fff', marginLeft: 8, fontSize: 16 },
     btn: {
-        backgroundColor: PRIMARY,
-        borderRadius: 18,
-        paddingVertical: 14,
-        alignItems: 'center',
-        marginTop: 16,
-        marginBottom: 4,
+        backgroundColor: PRIMARY, borderRadius: 18,
+        paddingVertical: 14, alignItems: 'center',
+        marginTop: 16, marginBottom: 4
     },
     btnTxt: { color: '#fff', fontSize: 16, fontWeight: '600' },
     alt: { textAlign: 'center', color: '#d1d5db', marginTop: 8 },
 
     sectionTitle: {
-        color: '#e0e7ff',
-        fontSize: 16,
-        fontWeight: '600',
-        marginVertical: 12,
+        color: '#e0e7ff', fontSize: 16, fontWeight: '600',
+        marginVertical: 12
     },
 
     // Hours
     hoursRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 8,
+        flexDirection: 'row', alignItems: 'center', marginBottom: 8
     },
     dayLabel: {
-        width: 80,
-        color: '#fff',
-        fontWeight: '600',
+        width: 80, color: '#fff', fontWeight: '600'
     },
     timeBtn: {
-        flex: 1,
-        height: 40,
+        flex: 1, height: 40,
         backgroundColor: 'rgba(255,255,255,0.1)',
-        borderRadius: 8,
-        justifyContent: 'center',
-        marginHorizontal: 4,
+        borderRadius: 8, justifyContent: 'center',
+        marginHorizontal: 4
     },
     timeTxt: { color: '#fff', textAlign: 'center' },
 
     // Services
     servicesRow: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        marginBottom: 12,
+        flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12
     },
     serviceBtn: {
         backgroundColor: 'rgba(255,255,255,0.2)',
-        borderRadius: 16,
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        margin: 4,
+        borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, margin: 4
     },
-    serviceOn: {
-        backgroundColor: PRIMARY,
-    },
-    serviceTxt: {
-        color: '#fff',
-    },
-    serviceTxtOn: {
-        color: '#fff',
-        fontWeight: '600',
-    },
+    serviceOn: { backgroundColor: PRIMARY },
+    serviceTxt: { color: '#fff' },
+    serviceTxtOn: { color: '#fff', fontWeight: '600' },
 
     // Courts
+    newCourtRow: {
+        flexDirection: 'row', alignItems: 'center', marginBottom: 12
+    },
+    newCourtInput: {
+        flex: 1, height: 40, backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 8, paddingHorizontal: 8, color: '#fff'
+    },
+    addCourtBtn: {
+        marginLeft: 8, backgroundColor: PRIMARY, padding: 8, borderRadius: 8
+    },
     courtRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 8,
+        flexDirection: 'row', alignItems: 'center', marginBottom: 8
     },
     courtPicker: {
-        flex: 1,
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        borderRadius: 8,
-        color: '#fff',
+        flex: 1, backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 8, color: '#fff'
     },
 
     // Picker Modal
     modalOverlay: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: '#0008',
-        justifyContent: 'center',
-        alignItems: 'center',
+        justifyContent: 'center', alignItems: 'center'
     },
     pickerModal: {
-        width: '80%',
-        backgroundColor: '#312e81',
-        borderRadius: 12,
-        overflow: 'hidden',
+        width: '80%', backgroundColor: '#312e81',
+        borderRadius: 12, overflow: 'hidden'
     },
     pickerActions: {
-        flexDirection: 'row',
-        backgroundColor: '#1f1f2e',
+        flexDirection: 'row', backgroundColor: '#1f1f2e'
     },
-    pickerActionBtn: {
-        flex: 1,
-        paddingVertical: 12,
-        alignItems: 'center',
-    },
-    pickerActionTxt: {
-        color: '#fff',
-        fontWeight: '600',
-    },
+    pickerActionBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
+    pickerActionTxt: { color: '#fff', fontWeight: '600' },
 });
