@@ -27,6 +27,13 @@ export default function BusinessLayout() {
                 }}
             />
             <Tabs.Screen
+                name="community"
+                options={{
+                    title: 'Community',
+                    tabBarIcon: ({ color }) => <MaterialCommunityIcons name="chat" size={24} color={color} />,
+                }}
+            />
+            <Tabs.Screen
                 name="areas"
                 options={{
                     title: 'Areas',

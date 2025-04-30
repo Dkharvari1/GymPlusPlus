@@ -1,6 +1,6 @@
 // app/(business)/dashboard.tsx
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
     View,
     Text,
@@ -9,6 +9,8 @@ import {
     ScrollView,
     ActivityIndicator,
     Pressable,
+    Modal,
+    Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -21,27 +23,41 @@ import {
     addDoc,
     serverTimestamp,
     Timestamp,
+    getDocs,
 } from 'firebase/firestore';
 import { db, auth } from '../../lib/firebaseConfig';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { Calendar, DateData } from 'react-native-calendars';
+import { Picker } from '@react-native-picker/picker';
+
+const { width } = Dimensions.get('window');
+const BAR_WIDTH = (width - 48) / 16;
 
 export default function DashboardScreen() {
-    const uid = auth.currentUser?.uid!;
+    const router = useRouter();
+    const uid = auth.currentUser!.uid;
+
     const [gym, setGym] = useState<any>(null);
     const [membersCount, setMembersCount] = useState(0);
+    const [newMembersCount, setNewMembersCount] = useState(0);
     const [bookingsCount, setBookingsCount] = useState(0);
     const [todayBookings, setTodayBookings] = useState<any[]>([]);
+    const [upcomingBookings, setUpcomingBookings] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
-    // announcement form
-    const [title, setTitle] = useState('');
-    const [desc, setDesc] = useState('');
-    const [posting, setPosting] = useState(false);
+    // calendar
+    const [selectedDate, setSelectedDate] = useState<string | null>(null);
+    const [bookingsForDate, setBookingsForDate] = useState<any[]>([]);
+    const [loadingDate, setLoadingDate] = useState(false);
 
-    // recent announcements
-    const [announcements, setAnnouncements] = useState<any[]>([]);
+    // staff modal
+    const [showStaffModal, setShowStaffModal] = useState(false);
+    const [staffName, setStaffName] = useState('');
+    const [staffRole, setStaffRole] = useState<'trainer' | 'massage'>('trainer');
+    const [postingStaff, setPostingStaff] = useState(false);
 
-    // ── 1️⃣ Load gym owned by this user ─────────────────────────────
+    // 1️⃣ load gym
     useEffect(() => {
         const q = query(collection(db, 'gyms'), where('ownerUid', '==', uid));
         return onSnapshot(
@@ -60,92 +76,114 @@ export default function DashboardScreen() {
         );
     }, [uid]);
 
-    // ── 2️⃣ Member count ────────────────────────────────────────────
+    // 2️⃣ member counts
     useEffect(() => {
         if (!gym) return;
-        const q = query(collection(db, 'users'), where('gymId', '==', gym.id));
-        const unsub = onSnapshot(
-            q,
-            snap => setMembersCount(snap.size),
-            err => console.warn('members fetch error', err)
-        );
-        return unsub;
+        const q1 = query(collection(db, 'users'), where('gymId', '==', gym.id));
+        const unsub1 = onSnapshot(q1, snap => setMembersCount(snap.size));
+
+        (async () => {
+            const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+            const q2 = query(
+                collection(db, 'users'),
+                where('gymId', '==', gym.id),
+                where('createdAt', '>=', Timestamp.fromDate(weekAgo))
+            );
+            const snap2 = await getDocs(q2);
+            setNewMembersCount(snap2.size);
+        })();
+
+        return () => unsub1();
     }, [gym]);
 
-    // ── 3️⃣ Booking count ────────────────────────────────────────────
+    // 3️⃣ booking counts & today’s & upcoming
     useEffect(() => {
         if (!gym) return;
-        const q = query(collection(db, 'bookings'), where('gymId', '==', gym.id));
-        const unsub = onSnapshot(
-            q,
-            snap => setBookingsCount(snap.size),
-            err => console.warn('bookings fetch error', err)
-        );
-        return unsub;
-    }, [gym]);
+        const qB = query(collection(db, 'bookings'), where('gymId', '==', gym.id));
+        const unsubB = onSnapshot(qB, snap => setBookingsCount(snap.size));
 
-    // ── 4️⃣ Today’s bookings ─────────────────────────────────────────
-    useEffect(() => {
-        if (!gym) return;
-        // midnight today
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        // midnight tomorrow
+        // today’s
+        const start = new Date(); start.setHours(0, 0, 0, 0);
         const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-
-        const q = query(
+        const qT = query(
             collection(db, 'bookings'),
             where('gymId', '==', gym.id),
             where('start', '>=', Timestamp.fromDate(start)),
             where('start', '<', Timestamp.fromDate(end)),
             orderBy('start')
         );
-        const unsub = onSnapshot(
-            q,
-            snap => {
-                setTodayBookings(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-            },
-            err => console.warn('today bookings fetch error', err)
-        );
-        return unsub;
-    }, [gym]);
+        const unsubT = onSnapshot(qT, snap => {
+            setTodayBookings(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+        });
 
-    // ── 5️⃣ Fetch recent announcements ───────────────────────────────
-    useEffect(() => {
-        if (!gym) return;
-        const q = query(
-            collection(db, 'announcements'),
+        // next 30
+        const qU = query(
+            collection(db, 'bookings'),
             where('gymId', '==', gym.id),
-            orderBy('createdAt', 'desc'),
-            limit(5)
+            where('start', '>=', Timestamp.now()),
+            orderBy('start'),
+            limit(30)
         );
-        const unsub = onSnapshot(
-            q,
-            snap => {
-                setAnnouncements(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-            },
-            err => console.warn('announcements fetch error', err)
-        );
-        return unsub;
+        const unsubU = onSnapshot(qU, snap => {
+            setUpcomingBookings(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+        });
+
+        return () => { unsubB(); unsubT(); unsubU(); };
     }, [gym]);
 
-    // ── 6️⃣ Post a new announcement ─────────────────────────────────
-    const postAnnouncement = async () => {
-        if (!title.trim() || !desc.trim() || !gym) return;
-        setPosting(true);
+    // 4️⃣ peak-hour heatmap
+    const hoursCount = useMemo(() => {
+        const counts: Record<number, number> = {};
+        todayBookings.forEach(b => {
+            const h = (b.start as Timestamp).toDate().getHours();
+            counts[h] = (counts[h] || 0) + 1;
+        });
+        return counts;
+    }, [todayBookings]);
+
+    // 5️⃣ fetch bookings for selected date (manual parse!)
+    useEffect(() => {
+        if (!selectedDate || !gym) {
+            setBookingsForDate([]);
+            return;
+        }
+        setLoadingDate(true);
+        (async () => {
+            const [y, m, d] = selectedDate.split('-').map(Number);
+            const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0);
+            const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
+
+            const qD = query(
+                collection(db, 'bookings'),
+                where('gymId', '==', gym.id),
+                where('start', '>=', Timestamp.fromDate(dayStart)),
+                where('start', '<', Timestamp.fromDate(dayEnd)),
+                orderBy('start')
+            );
+            const snap = await getDocs(qD);
+            setBookingsForDate(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+            setLoadingDate(false);
+        })();
+    }, [selectedDate, gym]);
+
+    // 6️⃣ add staff
+    const addStaff = async () => {
+        if (!staffName.trim() || !gym) return;
+        setPostingStaff(true);
         try {
-            await addDoc(collection(db, 'announcements'), {
+            await addDoc(collection(db, 'trainers'), {
                 gymId: gym.id,
-                title: title.trim(),
-                description: desc.trim(),
+                name: staffName.trim(),
+                role: staffRole,
                 createdAt: serverTimestamp(),
             });
-            setTitle('');
-            setDesc('');
+            setStaffName('');
+            setStaffRole('trainer');
+            setShowStaffModal(false);
         } catch (e: any) {
-            console.error('Failed to post update', e);
+            console.error('add staff error', e);
         } finally {
-            setPosting(false);
+            setPostingStaff(false);
         }
     };
 
@@ -165,108 +203,200 @@ export default function DashboardScreen() {
             end={{ x: 0.8, y: 1 }}
         >
             <ScrollView contentContainerStyle={styles.container}>
-                <Text style={styles.title}>{gym?.name ?? 'Dashboard'}</Text>
+                <Text style={styles.title}>{gym?.name}</Text>
 
-                {/* ── Summary cards ──────────────────────────────────────────── */}
-                <View style={styles.card}>
-                    <MaterialCommunityIcons name="account-group" size={32} color="#4f46e5" />
-                    <Text style={styles.cardLabel}>Members</Text>
-                    <Text style={styles.cardValue}>{membersCount}</Text>
-                </View>
-                <View style={styles.card}>
-                    <MaterialCommunityIcons name="calendar-check" size={32} color="#4f46e5" />
-                    <Text style={styles.cardLabel}>Total Bookings</Text>
-                    <Text style={styles.cardValue}>{bookingsCount}</Text>
+                {/* Summary cards */}
+                <View style={styles.row}>
+                    <View style={styles.card}>
+                        <MaterialCommunityIcons name="account-group" size={28} color="#4f46e5" />
+                        <Text style={styles.cardLabel}>Members</Text>
+                        <Text style={styles.cardValue}>{membersCount}</Text>
+                    </View>
+                    <View style={styles.card}>
+                        <MaterialCommunityIcons name="account-plus" size={28} color="#4f46e5" />
+                        <Text style={styles.cardLabel}>New (7d)</Text>
+                        <Text style={styles.cardValue}>{newMembersCount}</Text>
+                    </View>
                 </View>
 
-                {/* ── Today’s Bookings ───────────────────────────────────────── */}
-                <Text style={styles.sectionTitle}>Today’s Bookings</Text>
-                {todayBookings.length === 0 ? (
-                    <Text style={styles.empty}>No bookings for today.</Text>
-                ) : (
-                    todayBookings.map(b => {
-                        const start = (b.start as Timestamp).toDate();
+                <View style={styles.row}>
+                    <View style={styles.card}>
+                        <MaterialCommunityIcons name="calendar-check" size={28} color="#4f46e5" />
+                        <Text style={styles.cardLabel}>Total Bookings</Text>
+                        <Text style={styles.cardValue}>{bookingsCount}</Text>
+                    </View>
+                    <View style={styles.card}>
+                        <MaterialCommunityIcons name="calendar-today" size={28} color="#4f46e5" />
+                        <Text style={styles.cardLabel}>Today’s</Text>
+                        <Text style={styles.cardValue}>{todayBookings.length}</Text>
+                    </View>
+                </View>
+
+                {/* Clickable calendar */}
+                <Text style={styles.sectionTitle}>Upcoming Sessions</Text>
+                <Calendar
+                    style={styles.calendar}
+                    onDayPress={(day: DateData) => setSelectedDate(day.dateString)}
+                    markedDates={{
+                        ...upcomingBookings.reduce((m, b) => {
+                            const d = (b.start as Timestamp)
+                                .toDate()
+                                .toISOString()
+                                .slice(0, 10);
+                            m[d] = { marked: true, dotColor: '#4f46e5' };
+                            return m;
+                        }, {} as Record<string, any>),
+                        ...(selectedDate
+                            ? { [selectedDate]: { selected: true, selectedColor: '#7c3aed' } }
+                            : {}),
+                    }}
+                />
+
+                {/* Bookings on that date */}
+                {selectedDate && (
+                    <View style={{ width: '100%' }}>
+                        <Text style={styles.subTitle}>Sessions on {selectedDate}</Text>
+
+                        {loadingDate ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : bookingsForDate.length === 0 ? (
+                            <Text style={styles.empty}>None</Text>
+                        ) : (
+                            bookingsForDate.map(b => {
+                                const t = (b.start as Timestamp).toDate();
+                                return (
+                                    <View key={b.id} style={styles.updateCard}>
+                                        <Text style={styles.updateTitle}>{b.title}</Text>
+                                        <Text style={styles.updateTime}>
+                                            {t.toLocaleTimeString(undefined, {
+                                                hour: '2-digit',
+                                                minute: '2-digit',
+                                            })}
+                                        </Text>
+                                    </View>
+                                );
+                            })
+                        )}
+                    </View>
+                )}
+
+                {/* Peak hours heatmap */}
+                <Text style={styles.sectionTitle}>Peak Hours (Today)</Text>
+                <ScrollView horizontal contentContainerStyle={styles.heatmap}>
+                    {Array.from({ length: 24 }, (_, h) => h).map(h => {
+                        const cnt = hoursCount[h] || 0;
                         return (
-                            <View key={b.id} style={styles.updateCard}>
-                                <Text style={styles.updateTitle}>{b.title}</Text>
-                                <Text style={styles.updateTime}>
-                                    {start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
-                                </Text>
+                            <View key={h} style={styles.barWrapper}>
+                                <View
+                                    style={{
+                                        ...styles.bar,
+                                        height: 10 + cnt * 6,
+                                        backgroundColor:
+                                            cnt > 0 ? '#4f46e5' : 'rgba(255,255,255,0.2)',
+                                    }}
+                                />
+                                <Text style={styles.barLabel}>{h}</Text>
                             </View>
                         );
-                    })
-                )}
+                    })}
+                </ScrollView>
 
-                {/* ── Post a Community Update ────────────────────────────────── */}
-                <Text style={styles.sectionTitle}>Post an Update</Text>
-                <TextInput
-                    style={styles.input}
-                    placeholder="Title"
-                    placeholderTextColor="#ccc"
-                    value={title}
-                    onChangeText={setTitle}
-                />
-                <TextInput
-                    style={[styles.input, styles.multiline]}
-                    placeholder="Description"
-                    placeholderTextColor="#ccc"
-                    value={desc}
-                    onChangeText={setDesc}
-                    multiline
-                />
-                <Pressable
-                    style={[
-                        styles.postBtn,
-                        (!title.trim() || !desc.trim() || posting) && { opacity: 0.5 },
-                    ]}
-                    onPress={postAnnouncement}
-                    disabled={!title.trim() || !desc.trim() || posting}
-                >
-                    {posting ? <ActivityIndicator color="#fff" /> : <Text style={styles.postBtnText}>Post Update</Text>}
-                </Pressable>
-
-                {/* ── Recent Updates ─────────────────────────────────────────── */}
-                <Text style={[styles.sectionTitle, { marginTop: 32 }]}>Recent Updates</Text>
-                {announcements.length === 0 ? (
-                    <Text style={styles.empty}>No updates yet.</Text>
-                ) : (
-                    announcements.map(u => (
-                        <View key={u.id} style={styles.updateCard}>
-                            <Text style={styles.updateTitle}>{u.title}</Text>
-                            <Text style={styles.updateDesc}>{u.description}</Text>
-                            <Text style={styles.updateTime}>
-                                {u.createdAt
-                                    .toDate()
-                                    .toLocaleString(undefined, {
-                                        month: 'short',
-                                        day: 'numeric',
-                                        hour: '2-digit',
-                                        minute: '2-digit',
-                                    })}
-                            </Text>
-                        </View>
-                    ))
-                )}
+                {/* Quick actions */}
+                <Text style={styles.sectionTitle}>Quick Actions</Text>
+                <View style={styles.row}>
+                    <Pressable
+                        style={styles.actionBtn}
+                        onPress={() => router.push('/(auth)/register')}
+                    >
+                        <MaterialCommunityIcons name="account-plus" size={28} color="#fff" />
+                        <Text style={styles.actionTxt}>Add Member</Text>
+                    </Pressable>
+                    <Pressable
+                        style={styles.actionBtn}
+                        onPress={() => setShowStaffModal(true)}
+                    >
+                        <MaterialCommunityIcons name="account-tie" size={28} color="#fff" />
+                        <Text style={styles.actionTxt}>Add Staff</Text>
+                    </Pressable>
+                </View>
             </ScrollView>
+
+            {/* Staff modal */}
+            <Modal visible={showStaffModal} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modal}>
+                        <Text style={styles.modalTitle}>New Staff</Text>
+                        <TextInput
+                            style={styles.input}
+                            placeholder="Name"
+                            placeholderTextColor="#ccc"
+                            value={staffName}
+                            onChangeText={setStaffName}
+                        />
+                        <Picker
+                            selectedValue={staffRole}
+                            onValueChange={v => setStaffRole(v as any)}
+                            style={styles.picker}
+                        >
+                            <Picker.Item label="Personal Trainer" value="trainer" />
+                            <Picker.Item label="Massage Therapist" value="massage" />
+                        </Picker>
+                        <View style={styles.modalRow}>
+                            <Pressable
+                                onPress={() => setShowStaffModal(false)}
+                                style={styles.modalBtn}
+                            >
+                                <Text style={styles.modalBtnTxt}>Cancel</Text>
+                            </Pressable>
+                            <Pressable
+                                onPress={addStaff}
+                                style={[styles.modalBtn, postingStaff && { opacity: 0.5 }]}
+                            >
+                                <Text style={styles.modalBtnTxt}>
+                                    {postingStaff ? 'Adding…' : 'Add'}
+                                </Text>
+                            </Pressable>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </LinearGradient>
     );
 }
 
 const styles = StyleSheet.create({
     bg: { flex: 1 },
-    center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#312e81' },
-    container: { padding: 24, paddingTop: 80, alignItems: 'center' },
-    title: { fontSize: 28, fontWeight: '700', color: '#fff', marginBottom: 24, textAlign: 'center' },
-    card: {
+    center: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#312e81',
+    },
+    container: { padding: 24, paddingTop: 80, alignItems: 'center', width: '100%' },
+    title: {
+        fontSize: 28,
+        fontWeight: '700',
+        color: '#fff',
+        marginBottom: 24,
+        textAlign: 'center',
+    },
+
+    row: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
         width: '100%',
+        marginBottom: 16,
+    },
+    card: {
+        flex: 1,
+        marginHorizontal: 4,
         backgroundColor: 'rgba(255,255,255,0.2)',
         borderRadius: 18,
-        padding: 24,
-        marginBottom: 16,
+        padding: 16,
         alignItems: 'center',
     },
-    cardLabel: { marginTop: 8, fontSize: 16, color: '#fff', fontWeight: '600' },
-    cardValue: { marginTop: 4, fontSize: 22, color: '#fff', fontWeight: '700' },
+    cardLabel: { color: '#e0e7ff', fontSize: 14, marginTop: 4 },
+    cardValue: { color: '#fff', fontSize: 20, fontWeight: '700' },
 
     sectionTitle: {
         width: '100%',
@@ -276,37 +406,89 @@ const styles = StyleSheet.create({
         marginTop: 24,
         marginBottom: 8,
     },
-    empty: { color: '#94a3b8', fontStyle: 'italic', marginTop: 12, textAlign: 'center' },
 
+    calendar: { width: '100%', borderRadius: 12, overflow: 'hidden' },
+
+    subTitle: {
+        color: '#cbd5e1',
+        fontSize: 15,
+        fontWeight: '500',
+        marginTop: 12,
+        marginBottom: 8,
+    },
+    empty: {
+        color: '#94a3b8',
+        fontStyle: 'italic',
+        textAlign: 'center',
+        marginBottom: 8,
+    },
     updateCard: {
         width: '100%',
         backgroundColor: 'rgba(255,255,255,0.15)',
         borderRadius: 12,
-        padding: 16,
-        marginBottom: 12,
+        padding: 12,
+        marginBottom: 8,
     },
-    updateTitle: { fontSize: 16, fontWeight: '700', color: '#fff' },
-    updateDesc: { color: '#e0e7ff', marginTop: 4 },
-    updateTime: { color: '#c7d2fe', fontSize: 12, marginTop: 6, textAlign: 'right' },
+    updateTitle: { color: '#fff', fontWeight: '600' },
+    updateTime: { color: '#c7d2fe', fontSize: 12, marginTop: 4, textAlign: 'right' },
 
-    input: {
-        width: '100%',
-        backgroundColor: 'rgba(255,255,255,0.1)',
+    heatmap: { paddingVertical: 12 },
+    barWrapper: { width: BAR_WIDTH, alignItems: 'center', marginHorizontal: 2 },
+    bar: { width: BAR_WIDTH, borderRadius: 4 },
+    barLabel: { color: '#e0e7ff', fontSize: 10, marginTop: 4 },
+
+    actionBtn: {
+        flex: 1,
+        marginHorizontal: 4,
+        backgroundColor: '#4f46e5',
+        borderRadius: 18,
+        paddingVertical: 16,
+        alignItems: 'center',
+    },
+    actionTxt: { color: '#fff', marginTop: 4, fontSize: 14 },
+
+    modalOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: '#0008',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    modal: {
+        width: '80%',
+        backgroundColor: '#312e81',
         borderRadius: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 8,
+        padding: 16,
+    },
+    modalTitle: {
+        color: '#fff',
+        fontSize: 18,
+        fontWeight: '600',
+        marginBottom: 12,
+        textAlign: 'center',
+    },
+    input: {
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 8,
+        padding: 8,
         color: '#fff',
         marginBottom: 12,
     },
-    multiline: { height: 80, textAlignVertical: 'top' },
-
-    postBtn: {
-        width: '100%',
-        backgroundColor: '#4f46e5',
-        borderRadius: 18,
-        paddingVertical: 14,
-        alignItems: 'center',
-        marginBottom: 16,
+    picker: {
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        color: '#fff',
+        marginBottom: 12,
     },
-    postBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+    modalRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+    },
+    modalBtn: {
+        flex: 1,
+        marginHorizontal: 4,
+        backgroundColor: '#4f46e5',
+        borderRadius: 8,
+        padding: 12,
+        alignItems: 'center',
+    },
+    modalBtnTxt: { color: '#fff', fontWeight: '600' },
 });
