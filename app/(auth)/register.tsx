@@ -1,6 +1,5 @@
-/* ────────────────────────────────────────────────────────────────
-   Register member (with avatar picker & gym selector)
-   ──────────────────────────────────────────────────────────────── */
+// app/(auth)/register.tsx
+
 import React, { useState, useEffect } from 'react';
 import {
     View,
@@ -12,6 +11,7 @@ import {
     Alert,
     Image,
     Platform,
+    SafeAreaView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
@@ -26,13 +26,14 @@ import {
     serverTimestamp,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { updateProfile } from 'firebase/auth';          // ← modular helper
+import { updateProfile } from 'firebase/auth';
 
 import { useAuth } from '../../context/AuthContext';
 import { db, auth, storage } from '../../lib/firebaseConfig';
 import AuthCard from '../../ui/AuthCard';
 
-/* ──────────────────────────────────────────────────────────────── */
+const PRIMARY = '#4f46e5';
+
 /* Avatar picker */
 const AvatarPicker = ({
     avatarUri,
@@ -85,7 +86,7 @@ const Row = React.memo(
                 autoCapitalize="none"
             />
         </View>
-    ),
+    )
 );
 
 /* Gym picker row */
@@ -116,15 +117,19 @@ const GymPickerRow = React.memo(
                 >
                     <Picker.Item label="Select Gym" value="" color="#9ca3af" />
                     {gyms.map(g => (
-                        <Picker.Item key={g.id} label={g.name} value={g.id} color="#fff" />
+                        <Picker.Item
+                            key={g.id}
+                            label={g.name}
+                            value={g.id}
+                            color="#fff"
+                        />
                     ))}
                 </Picker>
             )}
         </View>
-    ),
+    )
 );
 
-/* ──────────────────────────────────────────────────────────────── */
 export default function RegisterMember() {
     const router = useRouter();
     const { register } = useAuth();
@@ -147,7 +152,12 @@ export default function RegisterMember() {
     useEffect(() => {
         (async () => {
             const snap = await getDocs(collection(db, 'gyms'));
-            setGyms(snap.docs.map(d => ({ id: d.id, name: (d.data() as any).name })));
+            setGyms(
+                snap.docs.map(d => ({
+                    id: d.id,
+                    name: (d.data() as any).name,
+                }))
+            );
             setLoadingGyms(false);
         })();
     }, []);
@@ -212,13 +222,13 @@ export default function RegisterMember() {
                     photoURL,
                     updatedAt: serverTimestamp(),
                 },
-                { merge: true },
+                { merge: true }
             );
 
             /* save photoURL on Auth user */
-            await updateProfile(auth.currentUser!, { photoURL });   // ← fixed
+            await updateProfile(auth.currentUser!, { photoURL });
 
-            router.replace('/(auth)/goalSetup');
+            router.replace('/(auth)/packageSelection');
         } catch (err: any) {
             Alert.alert('Registration failed', err.message);
         } finally {
@@ -226,7 +236,6 @@ export default function RegisterMember() {
         }
     }
 
-    /* render */
     return (
         <LinearGradient
             colors={['#312e81', '#4f46e5', '#7c3aed']}
@@ -234,6 +243,17 @@ export default function RegisterMember() {
             start={{ x: 0.2, y: 0 }}
             end={{ x: 0.8, y: 1 }}
         >
+            {/** BACK BUTTON */}
+            <SafeAreaView style={styles.backWrap}>
+                <Pressable onPress={() => router.back()} style={styles.backBtn}>
+                    <MaterialCommunityIcons
+                        name="chevron-left"
+                        size={28}
+                        color="#fff"
+                    />
+                </Pressable>
+            </SafeAreaView>
+
             <View style={styles.center}>
                 <AuthCard>
                     <Text style={styles.title}>Create Account</Text>
@@ -306,7 +326,9 @@ export default function RegisterMember() {
                     </Text>
 
                     <Pressable onPress={() => router.push('/(auth)/registerGym')}>
-                        <Text style={styles.alt}>Own a gym? Register your business</Text>
+                        <Text style={styles.alt}>
+                            Own a gym? Register your business
+                        </Text>
                     </Pressable>
                 </AuthCard>
             </View>
@@ -314,13 +336,24 @@ export default function RegisterMember() {
     );
 }
 
-/* ──────────────────────────────────────────────────────────────── */
-const PRIMARY = '#4f46e5';
-
 const styles = StyleSheet.create({
-    bg: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-    center: { width: '100%' },
-
+    bg: {
+        flex: 1,
+    },
+    backWrap: {
+        position: 'absolute',
+        top: Platform.OS === 'ios' ? 50 : 30,
+        left: 16,
+        zIndex: 10,
+    },
+    backBtn: {
+        padding: 4,
+    },
+    center: {
+        flex: 1,
+        justifyContent: 'center',
+        padding: 24,
+    },
     title: {
         fontSize: 28,
         fontWeight: '700',
@@ -328,7 +361,6 @@ const styles = StyleSheet.create({
         marginBottom: 24,
         textAlign: 'center',
     },
-
     avatar: {
         width: 120,
         height: 120,
@@ -350,7 +382,6 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         padding: 4,
     },
-
     row: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -366,7 +397,6 @@ const styles = StyleSheet.create({
         marginLeft: 8,
         fontSize: 16,
     },
-
     rowPicker: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -381,7 +411,6 @@ const styles = StyleSheet.create({
         flex: 1,
         color: '#fff',
     },
-
     btn: {
         backgroundColor: PRIMARY,
         borderRadius: 18,
@@ -389,9 +418,22 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginBottom: 16,
     },
-    btnTxt: { color: '#fff', fontSize: 16, fontWeight: '600' },
-
-    switchTxt: { textAlign: 'center', color: '#d1d5db' },
-    switchLink: { color: '#fff', fontWeight: '600' },
-    alt: { textAlign: 'center', color: '#d1d5db', marginBottom: 4 },
+    btnTxt: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    switchTxt: {
+        textAlign: 'center',
+        color: '#d1d5db',
+    },
+    switchLink: {
+        color: '#fff',
+        fontWeight: '600',
+    },
+    alt: {
+        textAlign: 'center',
+        color: '#d1d5db',
+        marginTop: 8,
+    },
 });

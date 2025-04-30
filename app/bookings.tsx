@@ -1,6 +1,6 @@
 // app/bookings.tsx
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
     View,
     Text,
@@ -11,6 +11,7 @@ import {
     Alert,
     SafeAreaView,
     ScrollView,
+    Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -21,7 +22,6 @@ import {
     where,
     onSnapshot,
     addDoc,
-    getDocs,
     getDoc,
     doc,
     Timestamp,
@@ -30,146 +30,219 @@ import {
 import { auth, db } from '../lib/firebaseConfig';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
-type BType = 'trainer' | 'basketball' | 'pickleball' | 'racquetball' | 'massage';
-
-const OPTIONS: { type: BType; label: string; icon: any }[] = [
-    { type: 'trainer', label: 'Personal Trainer', icon: 'account-tie' },
-    { type: 'basketball', label: 'Basketball Court', icon: 'basketball' },
-    { type: 'pickleball', label: 'Pickleball Court', icon: 'tennis' },
-    { type: 'racquetball', label: 'Racquetball Court', icon: 'tennis-ball' },
-    { type: 'massage', label: 'Massage', icon: 'hand-heart' },
-];
-
-const TITLES: Record<BType, string> = {
-    trainer: 'Personal Trainer',
-    basketball: 'Basketball Court',
-    pickleball: 'Pickleball Court',
-    racquetball: 'Racquetball Court',
-    massage: 'Massage',
-};
-
 const { width } = Dimensions.get('window');
 const BTN = (width - 64) / 2;
+
+// Friendly labels for built-ins
+const BUILT_IN_LABELS: Record<string, string> = {
+    trainer: 'Personal Trainer',
+    massage: 'Massage Therapist',
+};
+
+function prettify(key?: string): string {
+    if (!key) return '';
+    return key
+        .split('_')
+        .map(w => w[0].toUpperCase() + w.slice(1))
+        .join(' ');
+}
+
+function getLabel(key?: string): string {
+    if (!key) return '';
+    return BUILT_IN_LABELS[key] ?? prettify(key);
+}
 
 export default function BookingsScreen() {
     const router = useRouter();
     const uid = auth.currentUser!.uid;
 
     const [gymId, setGymId] = useState<string | null>(null);
+    const [gymData, setGymData] = useState<any>(null);
+
     const [list, setList] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    const [selType, setSelType] = useState<BType | null>(null);
+    // New: map from staffId -> name
+    const [staffNames, setStaffNames] = useState<Record<string, string>>({});
+
+    // booking flow
+    const [selService, setSelService] = useState<string | null>(null);
     const [staffList, setStaffList] = useState<any[]>([]);
     const [selStaff, setSelStaff] = useState<string | null>(null);
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [tempDate, setTempDate] = useState(new Date());
 
-    // 1️⃣ Load user's gymId
+    // 1️⃣ Load gymId from user
     useEffect(() => {
-        getDoc(doc(db, 'users', uid)).then(snap => {
-            if (snap.exists()) setGymId((snap.data() as any).gymId);
-        });
+        (async () => {
+            const snap = await getDoc(doc(db, 'users', uid));
+            if (snap.exists()) {
+                setGymId((snap.data() as any).gymId ?? null);
+            }
+        })();
     }, [uid]);
 
-    // 2️⃣ Subscribe to user's booking history
+    // 2️⃣ Listen to gym document
+    useEffect(() => {
+        if (!gymId) return;
+        const unsub = onSnapshot(doc(db, 'gyms', gymId), snap => {
+            if (snap.exists()) setGymData(snap.data());
+        });
+        return () => unsub();
+    }, [gymId]);
+
+    // 3️⃣ Compute bookable options
+    const options = useMemo(() => {
+        if (!gymData) return [];
+        const rawServices = Array.isArray(gymData.services) ? gymData.services : [];
+        const svcKeys = rawServices
+            .map((s: any) => (typeof s === 'string' ? s : s.key))
+            .filter((k: any) => typeof k === 'string');
+
+        const courtsObj = gymData.courts && typeof gymData.courts === 'object'
+            ? (gymData.courts as Record<string, number>)
+            : {};
+        const courtKeys = Object.entries(courtsObj)
+            .filter(([, cnt]) => cnt > 0)
+            .map(([k]) => k);
+
+        return [
+            ...svcKeys.map((key: string) => ({ type: key, label: getLabel(key) })),
+            ...courtKeys.map(key => ({ type: key, label: getLabel(key) })),
+        ];
+    }, [gymData]);
+
+    // 4️⃣ Subscribe to my bookings
     useEffect(() => {
         const q = query(collection(db, 'bookings'), where('userId', '==', uid));
         const unsub = onSnapshot(
             q,
             snap => {
                 const arr = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-                arr.sort(
-                    (a, b) =>
-                        (b.start as Timestamp).seconds - (a.start as Timestamp).seconds
-                );
+                arr.sort((a, b) => (b.start as Timestamp).seconds - (a.start as Timestamp).seconds);
                 setList(arr);
                 setLoading(false);
             },
             err => {
-                console.warn('Booking query error', err);
+                console.warn(err);
                 setError(err.message);
                 setLoading(false);
-                getDocs(q).then(docs => {
-                    const arr = docs.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-                    arr.sort(
-                        (a, b) =>
-                            (b.start as Timestamp).seconds - (a.start as Timestamp).seconds
-                    );
-                    setList(arr);
-                });
             }
         );
-        return unsub;
+        return () => unsub();
     }, [uid]);
 
-    // 3️⃣ Load staff when booking a trainer/massage
+    // ⚡️ When bookings change, fetch each booked staff’s name
     useEffect(() => {
-        if (!gymId || (selType !== 'trainer' && selType !== 'massage')) {
+        const ids = Array.from(new Set(list.map(b => b.staffId).filter(Boolean)));
+        if (ids.length === 0) {
+            setStaffNames({});
+            return;
+        }
+        Promise.all(
+            ids.map(id =>
+                getDoc(doc(db, 'trainers', id)).then(snap =>
+                    snap.exists() ? (snap.data() as any).name : '—'
+                )
+            )
+        ).then(names => {
+            const map: Record<string, string> = {};
+            ids.forEach((id, i) => (map[id] = names[i]));
+            setStaffNames(map);
+        });
+    }, [list]);
+
+    // 5️⃣ Load trainers for a staff-based service
+    useEffect(() => {
+        if (
+            !gymId ||
+            !selService ||
+            !Array.isArray(gymData?.services)
+        ) {
             setStaffList([]);
             return;
         }
+        const svcKeys = (gymData.services as any[]).map(s => (typeof s === 'string' ? s : s.key));
+        if (!svcKeys.includes(selService)) {
+            setStaffList([]);
+            return;
+        }
+
+        // ← query on "service" field
         const q = query(
             collection(db, 'trainers'),
             where('gymId', '==', gymId),
-            where('role', '==', selType)
+            where('service', '==', selService)
         );
         const unsub = onSnapshot(q, snap => {
             setStaffList(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
         });
-        return unsub;
-    }, [gymId, selType]);
+        return () => unsub();
+    }, [gymData, gymId, selService]);
 
-    // 4️⃣ Begin booking
-    const startBooking = (type: BType) => {
-        setSelType(type);
+    // 6️⃣ Start booking
+    function startBooking(type: string) {
+        setSelService(type);
         setSelStaff(null);
-        setShowDatePicker(false);
         setTempDate(new Date());
-    };
 
-    // 5️⃣ Choose staff
-    const onChooseStaff = (staffId: string) => {
-        setSelStaff(staffId);
+        const svcKeys = Array.isArray(gymData?.services)
+            ? (gymData.services as any[]).map(s => (typeof s === 'string' ? s : s.key))
+            : [];
+        if (svcKeys.includes(type)) {
+            Alert.alert(
+                'Select Instructor',
+                `Please select a ${getLabel(type).toLowerCase()}.`
+            );
+        } else {
+            setShowDatePicker(true);
+        }
+    }
+
+    // 7️⃣ Pick a staff member
+    function onChooseStaff(id: string) {
+        setSelStaff(id);
         setShowDatePicker(true);
-    };
+    }
 
-    // 6️⃣ Date change
-    const onChange = (_: any, selected?: Date) => {
-        if (selected) setTempDate(selected);
-    };
+    // 8️⃣ Date/time change
+    function onDateChange(_: any, sel?: Date) {
+        if (sel) setTempDate(sel);
+    }
 
-    // 7️⃣ Confirm booking
-    const confirmPick = async () => {
+    // 9️⃣ Confirm booking
+    async function confirmBooking() {
         setShowDatePicker(false);
-        if (!selType || !gymId || !selStaff) return;
-
+        if (!selService || !gymId) return;
         const start = tempDate;
         const end = new Date(start.getTime() + 60 * 60 * 1000);
-
         try {
             await addDoc(collection(db, 'bookings'), {
                 userId: uid,
                 gymId,
-                type: selType,
-                staffId: selStaff,
-                title: TITLES[selType],
+                type: selService,
+                ...(selStaff ? { staffId: selStaff } : {}),
+                title: getLabel(selService),
                 start: Timestamp.fromDate(start),
                 end: Timestamp.fromDate(end),
                 createdAt: serverTimestamp(),
             });
+            setSelService(null);
+            setSelStaff(null);
         } catch (e: any) {
-            console.error('Booking write error', e);
+            console.error(e);
             Alert.alert('Error', 'Could not save booking. Try again.');
         }
-
-        setSelType(null);
-        setSelStaff(null);
-    };
+    }
 
     return (
-        <LinearGradient colors={['#312e81', '#4f46e5']} style={styles.bg}>
+        <LinearGradient
+            colors={['#312e81', '#4f46e5']}
+            style={styles.bg}
+            start={{ x: 0.2, y: 0 }}
+            end={{ x: 0.8, y: 1 }}
+        >
             <ScrollView contentContainerStyle={styles.scrollContainer}>
                 <SafeAreaView style={styles.header}>
                     <Pressable style={styles.back} onPress={() => router.back()}>
@@ -179,22 +252,22 @@ export default function BookingsScreen() {
                             color="#fff"
                         />
                     </Pressable>
-                    <Text style={styles.title}>Bookings</Text>
+                    <Text style={styles.title}>Book a Session</Text>
                 </SafeAreaView>
 
-                {/* 𝗢𝗽𝘁𝗶𝗼𝗻𝘀 */}
+                {/* Options */}
                 <View style={styles.row}>
-                    {OPTIONS.map(o => (
+                    {options.map(o => (
                         <Pressable
                             key={o.type}
                             style={[
                                 styles.btn,
-                                selType === o.type && { backgroundColor: '#c7d2fe' },
+                                selService === o.type && { backgroundColor: '#c7d2fe' },
                             ]}
                             onPress={() => startBooking(o.type)}
                         >
                             <MaterialCommunityIcons
-                                name={o.icon}
+                                name="calendar-plus"
                                 size={24}
                                 color="#4f46e5"
                             />
@@ -203,13 +276,16 @@ export default function BookingsScreen() {
                     ))}
                 </View>
 
-                {/* 𝗦𝘁𝗮𝗳𝗳 𝗦𝗲𝗹𝗲𝗰𝘁𝗶𝗼𝗻 */}
-                {selType &&
-                    (selType === 'trainer' || selType === 'massage') && (
+                {/* Staff pick */}
+                {selService &&
+                    Array.isArray(gymData?.services) &&
+                    (gymData.services as any[])
+                        .map(s => (typeof s === 'string' ? s : s.key))
+                        .includes(selService) &&
+                    !showDatePicker && (
                         <View style={styles.staffContainer}>
                             <Text style={styles.staffLabel}>
-                                Select{' '}
-                                {selType === 'trainer' ? 'Trainer' : 'Therapist'}
+                                Select {getLabel(selService).toLowerCase()}
                             </Text>
                             {staffList.length === 0 ? (
                                 <Text style={styles.empty}>No staff available.</Text>
@@ -237,86 +313,83 @@ export default function BookingsScreen() {
                         </View>
                     )}
 
-                {/* 𝗗𝗮𝘁𝗲-𝗣𝗶𝗰𝗸𝗲𝗿 */}
+                {/* Date/time picker */}
                 {showDatePicker && (
                     <View style={styles.pickerContainer}>
                         <DateTimePicker
                             value={tempDate}
                             mode="datetime"
                             display="spinner"
-                            textColor="#1e293b"
-                            onChange={onChange}
+                            textColor="#000"
+                            accentColor="#4f46e5"
+                            onChange={onDateChange}
                             style={styles.picker}
                         />
                         <View style={styles.pickerButtons}>
                             <Pressable
-                                onPress={() => setShowDatePicker(false)}
                                 style={styles.pickerBtn}
+                                onPress={() => setShowDatePicker(false)}
                             >
                                 <Text>Cancel</Text>
                             </Pressable>
-                            <Pressable onPress={confirmPick} style={styles.pickerBtn}>
+                            <Pressable
+                                style={styles.pickerBtn}
+                                onPress={confirmBooking}
+                            >
                                 <Text>Confirm</Text>
                             </Pressable>
                         </View>
                     </View>
                 )}
 
-                {/* 𝗟𝗶𝘀𝘁 / 𝗘𝗿𝗿𝗼𝗿 / 𝗘𝗺𝗽𝘁𝘆 */}
-                {loading && (
-                    <ActivityIndicator color="#fff" style={{ marginTop: 20 }} />
-                )}
-                {error && <Text style={styles.err}>{error}</Text>}
-                {!loading && list.length === 0 && (
+                {/* Your Bookings */}
+                <Text style={[styles.sectionTitle, { marginTop: 24 }]}>
+                    Your Bookings
+                </Text>
+                {loading ? (
+                    <ActivityIndicator color="#fff" style={{ marginVertical: 20 }} />
+                ) : error ? (
+                    <Text style={styles.err}>{error}</Text>
+                ) : list.length === 0 ? (
                     <Text style={styles.empty}>No bookings yet.</Text>
+                ) : (
+                    list.map(item => {
+                        const date = (item.start as Timestamp).toDate();
+                        return (
+                            <View key={item.id} style={styles.item}>
+                                <MaterialCommunityIcons
+                                    name="calendar"
+                                    size={22}
+                                    color="#4f46e5"
+                                />
+                                <View style={{ marginLeft: 10 }}>
+                                    <Text style={styles.itemTitle}>{item.title}</Text>
+                                    <Text style={styles.itemSub}>{date.toLocaleString()}</Text>
+                                    {item.staffId && (
+                                        <Text style={styles.itemSub}>
+                                            With: {staffNames[item.staffId] ?? '–'}
+                                        </Text>
+                                    )}
+                                </View>
+                            </View>
+                        );
+                    })
                 )}
-                {list.map(item => (
-                    <View key={item.id} style={styles.item}>
-                        <MaterialCommunityIcons
-                            name={
-                                OPTIONS.find(o => o.type === item.type)?.icon ?? 'calendar'
-                            }
-                            size={22}
-                            color="#4f46e5"
-                        />
-                        <View style={{ marginLeft: 10 }}>
-                            <Text style={styles.itemTitle}>{item.title}</Text>
-                            <Text style={styles.itemSub}>
-                                {(item.start as Timestamp).toDate().toLocaleString()}
-                            </Text>
-                        </View>
-                    </View>
-                ))}
             </ScrollView>
         </LinearGradient>
     );
 }
 
 const styles = StyleSheet.create({
-    bg: {
-        flex: 1,
-        backgroundColor: '#312e81',
-    },
-    scrollContainer: {
-        paddingHorizontal: 24,
-        paddingBottom: 40,
-    },
+    bg: { flex: 1, backgroundColor: '#312e81' },
+    scrollContainer: { paddingHorizontal: 24, paddingBottom: 40 },
     header: {
         alignItems: 'center',
         marginBottom: 20,
+        marginTop: Platform.OS === 'android' ? 40 : 0,
     },
-    back: {
-        position: 'absolute',
-        left: 16,
-        top: 60,
-        padding: 4,
-    },
-    title: {
-        color: '#fff',
-        fontSize: 24,
-        fontWeight: '700',
-        paddingVertical: 12,
-    },
+    back: { position: 'absolute', left: 0, top: 60, padding: 4 },
+    title: { color: '#fff', fontSize: 24, fontWeight: '700', paddingVertical: 12 },
 
     row: {
         flexDirection: 'row',
@@ -332,10 +405,6 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         paddingHorizontal: 8,
         alignItems: 'center',
-        shadowColor: '#000',
-        shadowOpacity: 0.05,
-        shadowRadius: 4,
-        shadowOffset: { width: 0, height: 2 },
     },
     btnTxt: {
         marginTop: 6,
@@ -345,10 +414,7 @@ const styles = StyleSheet.create({
         textAlign: 'center',
     },
 
-    staffContainer: {
-        marginBottom: 16,
-        width: '100%',
-    },
+    staffContainer: { marginBottom: 16, width: '100%' },
     staffLabel: {
         color: '#e0e7ff',
         marginBottom: 8,
@@ -361,10 +427,7 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         marginBottom: 8,
     },
-    staffTxt: {
-        color: '#fff',
-        fontSize: 16,
-    },
+    staffTxt: { color: '#fff', fontSize: 16 },
 
     pickerContainer: {
         width: '100%',
@@ -373,9 +436,7 @@ const styles = StyleSheet.create({
         marginBottom: 16,
         overflow: 'hidden',
     },
-    picker: {
-        width: '100%',
-    },
+    picker: { width: '100%' },
     pickerButtons: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -387,6 +448,25 @@ const styles = StyleSheet.create({
         backgroundColor: '#e5e7eb',
     },
 
+    sectionTitle: {
+        color: '#e0e7ff',
+        fontSize: 18,
+        fontWeight: '600',
+        marginBottom: 8,
+    },
+    empty: {
+        color: '#e0edf7',
+        fontSize: 16,
+        textAlign: 'center',
+        marginVertical: 12,
+    },
+    err: {
+        color: '#fecaca',
+        fontSize: 13,
+        textAlign: 'center',
+        marginVertical: 12,
+    },
+
     item: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -396,26 +476,6 @@ const styles = StyleSheet.create({
         marginVertical: 6,
         width: '100%',
     },
-    itemTitle: {
-        fontWeight: '600',
-        color: '#1e293b',
-    },
-    itemSub: {
-        color: '#64748b',
-        fontSize: 13,
-        marginTop: 2,
-    },
-
-    empty: {
-        color: '#e0e7ff',
-        fontSize: 16,
-        marginTop: 20,
-        textAlign: 'center',
-    },
-    err: {
-        color: '#fecaca',
-        fontSize: 13,
-        marginTop: 20,
-        textAlign: 'center',
-    },
+    itemTitle: { fontWeight: '600', color: '#1e293b' },
+    itemSub: { color: '#64748b', fontSize: 13, marginTop: 2 },
 });

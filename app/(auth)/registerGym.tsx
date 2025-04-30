@@ -58,7 +58,7 @@ const INITIAL_COURTS = [
     { key: 'racquetball', label: 'Racquetball Courts' },
 ] as const;
 
-// ─── Reusable row ──────────────────────────────────────────────────────────
+// ─── Reusable input row ────────────────────────────────────────────────────
 type RowProps = {
     icon: React.ComponentProps<typeof MaterialCommunityIcons>['name'];
     placeholder: string;
@@ -92,29 +92,35 @@ const Row = React.memo(({
     </View>
 ));
 
+type Package = {
+    name: string;
+    price: string;
+    description: string;
+};
+
 export default function RegisterGym() {
     const router = useRouter();
     const [busy, setBusy] = useState(false);
 
-    // ─── Basic info ────────────────────────────────────────────────────────────
+    // ─── Basic info ─────────────────────────────────────────────────────────
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [phone, setPhone] = useState('');
     const [pw, setPw] = useState('');
 
-    // ─── Business hours ────────────────────────────────────────────────────────
+    // ─── Business hours ──────────────────────────────────────────────────────
     const [hours, setHours] = useState<Record<Day, { open: string; close: string }>>(
         DAYS.reduce((acc, d) => ({ ...acc, [d]: { open: '', close: '' } }), {} as any)
     );
 
-    // ─── Services ──────────────────────────────────────────────────────────────
+    // ─── Services ────────────────────────────────────────────────────────────
     const [serviceTypes, setServiceTypes] = useState<{ key: string; label: string }[]>(
         BUILT_IN_SERVICES.map(s => ({ key: s.key, label: s.label }))
     );
     const [services, setServices] = useState<string[]>([]);
     const [newServiceLabel, setNewServiceLabel] = useState('');
 
-    // ─── Courts ────────────────────────────────────────────────────────────────
+    // ─── Courts ──────────────────────────────────────────────────────────────
     const [courtTypes, setCourtTypes] = useState<{ key: string; label: string }[]>(
         INITIAL_COURTS.map(c => ({ key: c.key, label: c.label }))
     );
@@ -123,17 +129,20 @@ export default function RegisterGym() {
     );
     const [newCourtLabel, setNewCourtLabel] = useState('');
 
-    // ─── Staff Roles ───────────────────────────────────────────────────────────
-    const [roleTypes, setRoleTypes] = useState<{ key: string; label: string }[]>([]);
-    const [newRoleLabel, setNewRoleLabel] = useState('');
+    // ─── Membership packages ─────────────────────────────────────────────────
+    const [packages, setPackages] = useState<Package[]>([]);
+    const [pkgName, setPkgName] = useState('');
+    const [pkgPrice, setPkgPrice] = useState('');
+    const [pkgDesc, setPkgDesc] = useState('');
 
-    // ─── Time picker ───────────────────────────────────────────────────────────
+    // ─── Time picker ─────────────────────────────────────────────────────────
     const [pickerVisible, setPickerVisible] = useState(false);
     const [pickerDay, setPickerDay] = useState<Day>(DAYS[0]);
     const [pickerMode, setPickerMode] = useState<'open' | 'close'>('open');
     const [tempTime, setTempTime] = useState(new Date());
 
-    const valid = () => !!name && !!email && !!phone && pw.length >= 6;
+    const valid = () =>
+        !!name && !!email && !!phone && pw.length >= 6;
 
     function openPicker(day: Day, mode: 'open' | 'close') {
         setPickerDay(day);
@@ -153,12 +162,12 @@ export default function RegisterGym() {
         const mm = tempTime.getMinutes().toString().padStart(2, '0');
         setHours(h => ({
             ...h,
-            [pickerDay]: { ...h[pickerDay], [pickerMode]: `${hh}:${mm}` }
+            [pickerDay]: { ...h[pickerDay], [pickerMode]: `${hh}:${mm}` },
         }));
         setPickerVisible(false);
     };
 
-    // ─── Services logic ────────────────────────────────────────────────────────
+    // ─── Services logic ───────────────────────────────────────────────────────
     const toggleService = (key: string) =>
         setServices(s => s.includes(key) ? s.filter(x => x !== key) : [...s, key]);
 
@@ -186,16 +195,18 @@ export default function RegisterGym() {
         setNewCourtLabel('');
     }
 
-    // ─── Roles logic ──────────────────────────────────────────────────────────
-    function addRoleType() {
-        const label = newRoleLabel.trim();
-        if (!label) return Alert.alert('Enter a role name first');
-        const key = label.toLowerCase().replace(/\s+/g, '_');
-        if (roleTypes.some(r => r.key === key)) {
-            return Alert.alert('That role already exists');
+    // ─── Packages logic ───────────────────────────────────────────────────────
+    function addPackage() {
+        if (!pkgName.trim() || !pkgPrice.trim() || !pkgDesc.trim()) {
+            return Alert.alert('Fill name, price & description');
         }
-        setRoleTypes(r => [...r, { key, label }]);
-        setNewRoleLabel('');
+        setPackages(ps => [
+            ...ps,
+            { name: pkgName.trim(), price: pkgPrice.trim(), description: pkgDesc.trim() },
+        ]);
+        setPkgName('');
+        setPkgPrice('');
+        setPkgDesc('');
     }
 
     // ─── Submit everything ────────────────────────────────────────────────────
@@ -216,7 +227,7 @@ export default function RegisterGym() {
                 role: 'business',
                 email: email.trim(),
                 phone,
-                createdAt: serverTimestamp()
+                createdAt: serverTimestamp(),
             }, { merge: true });
 
             // 2️⃣ gym doc
@@ -230,14 +241,14 @@ export default function RegisterGym() {
                 courts: Object.fromEntries(
                     Object.entries(courts).map(([k, v]) => [k, Number(v) || 0])
                 ),
-                roles: roleTypes,           // ← new roles array
+                membershipPackages: packages,
                 createdAt: serverTimestamp(),
             });
 
             // 3️⃣ link user → gym
             await updateDoc(doc(db, 'users', uid), {
                 gymId: gymRef.id,
-                gymName: name
+                gymName: name,
             });
 
             router.replace('/dashboard');
@@ -260,10 +271,34 @@ export default function RegisterGym() {
                     <Text style={styles.title}>Register Gym</Text>
 
                     {/* Basic */}
-                    <Row icon="office-building-marker" placeholder="Gym Name" value={name} onChangeText={setName} />
-                    <Row icon="email-outline" placeholder="Business Email" keyboardType="email-address" autoCapitalize="none" value={email} onChangeText={setEmail} />
-                    <Row icon="phone" placeholder="Phone Number" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
-                    <Row icon="lock-outline" placeholder="Password" secureTextEntry value={pw} onChangeText={setPw} />
+                    <Row
+                        icon="office-building-marker"
+                        placeholder="Gym Name"
+                        value={name}
+                        onChangeText={setName}
+                    />
+                    <Row
+                        icon="email-outline"
+                        placeholder="Business Email"
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        value={email}
+                        onChangeText={setEmail}
+                    />
+                    <Row
+                        icon="phone"
+                        placeholder="Phone Number"
+                        keyboardType="phone-pad"
+                        value={phone}
+                        onChangeText={setPhone}
+                    />
+                    <Row
+                        icon="lock-outline"
+                        placeholder="Password"
+                        secureTextEntry
+                        value={pw}
+                        onChangeText={setPw}
+                    />
 
                     {/* Hours */}
                     <Text style={styles.sectionTitle}>Business Hours</Text>
@@ -329,32 +364,48 @@ export default function RegisterGym() {
                                 onValueChange={v => setCourts(q => ({ ...q, [c.key]: v.toString() }))}
                                 style={styles.courtPicker}
                             >
-                                {Array.from({ length: 11 }, (_, i) => (<Picker.Item key={i} label={`${i}`} value={`${i}`} />))}
+                                {Array.from({ length: 11 }, (_, i) => (
+                                    <Picker.Item key={i} label={`${i}`} value={`${i}`} />
+                                ))}
                             </Picker>
                         </View>
                     ))}
 
-                    {/* Staff Roles */}
-                    <Text style={styles.sectionTitle}>Staff Roles</Text>
+                    {/* Membership Packages */}
+                    <Text style={styles.sectionTitle}>Membership Packages</Text>
                     <View style={styles.addRow}>
                         <TextInput
-                            style={styles.newInput}
-                            placeholder="New role"
+                            style={[styles.newInput, { flex: 2 }]}
+                            placeholder="Package name"
                             placeholderTextColor="#ccc"
-                            value={newRoleLabel}
-                            onChangeText={setNewRoleLabel}
+                            value={pkgName}
+                            onChangeText={setPkgName}
                         />
-                        <Pressable style={styles.addBtn} onPress={addRoleType}>
+                        <TextInput
+                            style={[styles.newInput, { flex: 1 }]}
+                            placeholder="Price"
+                            placeholderTextColor="#ccc"
+                            keyboardType="numeric"
+                            value={pkgPrice}
+                            onChangeText={setPkgPrice}
+                        />
+                        <TextInput
+                            style={[styles.newInput, { flex: 3 }]}
+                            placeholder="Description"
+                            placeholderTextColor="#ccc"
+                            value={pkgDesc}
+                            onChangeText={setPkgDesc}
+                        />
+                        <Pressable style={styles.addBtn} onPress={addPackage}>
                             <MaterialCommunityIcons name="plus" size={24} color="#fff" />
                         </Pressable>
                     </View>
-                    <View style={styles.rolesRow}>
-                        {roleTypes.map(r => (
-                            <View key={r.key} style={styles.roleBadge}>
-                                <Text style={styles.roleBadgeTxt}>{r.label}</Text>
-                            </View>
-                        ))}
-                    </View>
+                    {packages.map((p, i) => (
+                        <View key={i} style={styles.pkgRow}>
+                            <Text style={styles.pkgTxt}>{p.name} — ${p.price}</Text>
+                            <Text style={styles.pkgDesc}>{p.description}</Text>
+                        </View>
+                    ))}
 
                     {/* Time‐picker modal */}
                     {pickerVisible && (
@@ -409,7 +460,10 @@ const styles = StyleSheet.create({
     bg: { flex: 1 },
     center: { padding: 24, paddingTop: 40, paddingBottom: 80 },
 
-    title: { fontSize: 28, fontWeight: '700', color: '#fff', marginBottom: 24, textAlign: 'center' },
+    title: {
+        fontSize: 28, fontWeight: '700', color: '#fff',
+        marginBottom: 24, textAlign: 'center'
+    },
 
     row: {
         flexDirection: 'row', alignItems: 'center',
@@ -419,7 +473,10 @@ const styles = StyleSheet.create({
     },
     input: { flex: 1, color: '#fff', marginLeft: 8, fontSize: 16 },
 
-    sectionTitle: { color: '#e0e7ff', fontSize: 16, fontWeight: '600', marginVertical: 12 },
+    sectionTitle: {
+        color: '#e0e7ff', fontSize: 16, fontWeight: '600',
+        marginVertical: 12
+    },
 
     /** Hours **/
     hoursRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
@@ -430,7 +487,7 @@ const styles = StyleSheet.create({
     },
     timeTxt: { color: '#fff', textAlign: 'center' },
 
-    /** Add‐row **/
+    /** Add-row **/
     addRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
     newInput: {
         flex: 1, height: 40, backgroundColor: 'rgba(255,255,255,0.1)',
@@ -455,13 +512,13 @@ const styles = StyleSheet.create({
         borderRadius: 8, color: '#fff'
     },
 
-    /** Roles **/
-    rolesRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 },
-    roleBadge: {
-        backgroundColor: 'rgba(255,255,255,0.25)',
-        borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, margin: 4
+    /** Packages **/
+    pkgRow: {
+        backgroundColor: 'rgba(255,255,255,0.15)',
+        borderRadius: 8, padding: 10, marginBottom: 8
     },
-    roleBadgeTxt: { color: '#fff', fontWeight: '600' },
+    pkgTxt: { color: '#fff', fontWeight: '600' },
+    pkgDesc: { color: '#e0e7ff', marginTop: 4, fontStyle: 'italic' },
 
     /** Modal **/
     modalOverlay: {
