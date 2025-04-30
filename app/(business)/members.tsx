@@ -15,19 +15,21 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { auth, db } from '../../lib/firebaseConfig';
 import {
-    doc,
     collection,
     query,
     where,
     onSnapshot,
     updateDoc,
     getDoc,
+    doc,
 } from 'firebase/firestore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Picker } from '@react-native-picker/picker';
 
 export default function MembersScreen() {
     const uid = auth.currentUser!.uid;
+
+    // ── Core state
     const [gymId, setGymId] = useState<string | null>(null);
     const [membershipPackages, setMembershipPackages] = useState<
         { name: string; price: number; description: string }[]
@@ -36,40 +38,42 @@ export default function MembersScreen() {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
 
-    // Modal state for upgrading
+    // ── Modal for package upgrades
     const [upgradeModalVisible, setUpgradeModalVisible] = useState(false);
     const [memberToUpgrade, setMemberToUpgrade] = useState<any | null>(null);
     const [selectedPackage, setSelectedPackage] = useState<string>('');
 
-    // ① load this gym owner’s gymId
+    // ① Fetch *your* gym (business owner) and its packages
     useEffect(() => {
+        const q = query(
+            collection(db, 'gyms'),
+            where('ownerUid', '==', uid)
+        );
         const unsub = onSnapshot(
-            doc(db, 'users', uid),
+            q,
             snap => {
-                if (snap.exists()) {
-                    setGymId((snap.data() as any).gymId ?? null);
+                if (!snap.empty) {
+                    const d = snap.docs[0];
+                    const data = d.data() as any;
+                    setGymId(d.id);
+                    setMembershipPackages(data.membershipPackages ?? []);
+                } else {
+                    console.warn('No gym found for owner', uid);
                 }
+                setLoading(false);
             },
-            e => console.warn('user doc error', e)
+            err => {
+                console.warn('Gym fetch error', err);
+                setLoading(false);
+            }
         );
         return () => unsub();
     }, [uid]);
 
-    // ② once we have gymId, fetch membershipPackages from gyms/{gymId}
+    // ② Subscribe to all members of that gym
     useEffect(() => {
         if (!gymId) return;
-        (async () => {
-            const gymSnap = await getDoc(doc(db, 'gyms', gymId));
-            if (gymSnap.exists()) {
-                const data = gymSnap.data() as any;
-                setMembershipPackages(data.membershipPackages ?? []);
-            }
-        })();
-    }, [gymId]);
-
-    // ③ subscribe to all members in that gym
-    useEffect(() => {
-        if (!gymId) return;
+        setLoading(true);
         const q = query(
             collection(db, 'users'),
             where('gymId', '==', gymId)
@@ -80,12 +84,15 @@ export default function MembersScreen() {
                 setMembers(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
                 setLoading(false);
             },
-            e => console.warn('members fetch error', e)
+            err => {
+                console.warn('Members fetch error', err);
+                setLoading(false);
+            }
         );
         return () => unsub();
     }, [gymId]);
 
-    // ④ filter by searchTerm
+    // ③ Filter by search term
     const filtered = useMemo(() => {
         const t = searchTerm.trim().toLowerCase();
         if (!t) return members;
@@ -96,7 +103,7 @@ export default function MembersScreen() {
         });
     }, [members, searchTerm]);
 
-    // ⑤ cancel membership (clear gymId & gymName)
+    // ④ Cancel membership
     const handleCancel = (member: any) => {
         Alert.alert(
             'Cancel membership?',
@@ -124,14 +131,14 @@ export default function MembersScreen() {
         );
     };
 
-    // ⑥ open upgrade modal
+    // ⑤ Open upgrade modal
     const openUpgrade = (member: any) => {
         setMemberToUpgrade(member);
         setSelectedPackage(member.package ?? '');
         setUpgradeModalVisible(true);
     };
 
-    // ⑦ confirm upgrade
+    // ⑥ Confirm package upgrade
     const confirmUpgrade = async () => {
         if (!memberToUpgrade) return;
         try {
@@ -147,6 +154,7 @@ export default function MembersScreen() {
         }
     };
 
+    // Loading spinner
     if (loading) {
         return (
             <LinearGradient
@@ -225,7 +233,7 @@ export default function MembersScreen() {
                             onValueChange={v => setSelectedPackage(v)}
                             style={styles.picker}
                         >
-                            <Picker.Item label="None" value={""} />
+                            <Picker.Item label="None" value="" />
                             {membershipPackages.map((p, i) => (
                                 <Picker.Item
                                     key={i}
