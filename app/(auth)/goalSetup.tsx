@@ -39,20 +39,21 @@ const GOALS = [
     'General health & wellness',
     'Maintain weight',
     'Prepare for competition',
-] as const;
-
-const DIETS = [
+  ] as const;
+  
+  const DIETS = [
     'Balanced / Portion-controlled',
+    'High-protein',
     'Low-carb',
     'Ketogenic',
     'Mediterranean',
-    'High-protein',
     'Vegetarian',
     'Vegan',
     'Pescatarian',
     'Paleo',
     'Intermittent fasting',
-] as const;
+  ] as const;
+  
 
 /* ─────────────────────────────────────────────────────────── */
 export default function GoalSetup() {

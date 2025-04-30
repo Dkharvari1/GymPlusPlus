@@ -1,262 +1,204 @@
 // app/(tabs)/community.tsx
 import React, {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useLayoutEffect,
+  useEffect, useState, useRef, useCallback, useLayoutEffect,
 } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  Image,
-  SafeAreaView,
+  View, Text, FlatList, TextInput, Pressable, StyleSheet,
+  KeyboardAvoidingView, Platform, ActivityIndicator, Image, SafeAreaView,
 } from 'react-native';
-import { AntDesign, MaterialCommunityIcons } from '@expo/vector-icons';
+import { AntDesign } from '@expo/vector-icons';
 import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
+  collection, doc, addDoc, onSnapshot, serverTimestamp,
+  getDoc, orderBy, query,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
-import { db } from '../../lib/firebaseConfig';
 import { useRouter } from 'expo-router';
+import { db } from '../../lib/firebaseConfig';
 
-/* ─── constants ─────────────────────────────────────────────────────── */
-const PRIMARY = '#4f46e5';
-const BG_GRADIENT = ['#312e81', '#4f46e5', '#7c3aed'] as const;
-const AVATAR_SIZE = 36;
+/* -------------------------------------------------------------- */
+const GRADIENT = ['#312e81', '#4f46e5', '#7c3aed'] as const;
+const PRIMARY  = '#4f46e5';
+const AVSZ     = 36;
 
-/* ─── types ─────────────────────────────────────────────────────────── */
-interface ChatMessage {
+/* privileged roles → badge styling */
+const ROLE_BADGE: Record<string, { label: string; bg: string }> = {
+  business: { label: 'Gym', bg: '#a78bfa' },
+  owner:    { label: 'Owner',    bg: '#facc15' },
+  manager:  { label: 'Manager',  bg: '#38bdf8' },
+};
+
+interface Msg {
   id: string;
   text: string;
   senderUid: string;
   senderName: string;
+  senderRole?: string;
   photoURL?: string | null;
-  createdAt: any; // Firestore Timestamp
+  createdAt: any;
 }
 
-/* ─── component ─────────────────────────────────────────────────────── */
+/* -------------------------------------------------------------- */
 export default function CommunityScreen() {
-  const auth = getAuth();
-  const user = auth.currentUser!;
-  const navigation = useNavigation();
-  const router = useRouter();
+  const auth  = getAuth();
+  const user  = auth.currentUser!;
+  const nav   = useNavigation();
+  const router= useRouter();
 
-  const [gymId, setGymId] = useState<string | null>(null);
+  /* user & gym */
+  const [gymId,   setGymId]   = useState<string | null>(null);
   const [gymName, setGymName] = useState('Community');
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [photos, setPhotos] = useState<Record<string, string | null>>({});
-  const listRef = useRef<FlatList<ChatMessage>>(null);
+  const [myRole,  setMyRole]  = useState('member');
 
-  /* 🔄 LIVE listener for the user’s gymId */
+  /* chat state */
+  const [msgs,  setMsgs]  = useState<Msg[]>([]);
+  const [input, setInput] = useState('');
+  const [loading, setLoad]= useState(true);
+
+  /* avatar cache */
+  const photos = useRef<Record<string, string | null>>({});
+
+  const listRef = useRef<FlatList<Msg>>(null);
+
+  /* live user doc -> gymId & myRole */
   useEffect(() => {
-    const unsub = onSnapshot(
-      doc(db, 'users', user.uid),
-      (snap) => setGymId((snap.data() as any)?.gymId ?? null),
-      (err) => console.warn('user doc listener', err.code)
-    );
+    const unsub = onSnapshot(doc(db, 'users', user.uid), s => {
+      const d = s.data() as any;
+      setGymId(d?.gymId ?? null);
+      setMyRole(d?.role ?? 'member');
+    });
     return unsub;
   }, [user.uid]);
 
   /* gym name */
   useEffect(() => {
     if (!gymId) return;
-    (async () => {
-      const snap = await getDoc(doc(db, 'gyms', gymId));
-      if (snap.exists()) setGymName((snap.data() as any).name ?? 'Community');
-    })();
+    getDoc(doc(db, 'gyms', gymId)).then(s => {
+      if (s.exists()) setGymName((s.data() as any).name ?? 'Community');
+    });
   }, [gymId]);
 
-  /* optional nav-bar title */
-  useLayoutEffect(() => {
-    navigation.setOptions({ title: gymName });
-  }, [navigation, gymName]);
+  useLayoutEffect(() => nav.setOptions({ title: gymName }), [nav, gymName]);
 
-  /* subscribe to chat (DESC for inverted list) */
+  /* live messages (read-only) */
   useEffect(() => {
     if (!gymId) return;
+
     const q = query(
       collection(db, 'gyms', gymId, 'messages'),
       orderBy('createdAt', 'desc')
     );
+
     const unsub = onSnapshot(
       q,
-      async (snap) => {
-        const msgs: ChatMessage[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<ChatMessage, 'id'>),
-        }));
-        setMessages(msgs);
-        setLoading(false);
-
-        /* cache avatars */
-        msgs.forEach(async (m) => {
-          if (m.photoURL) {
-            setPhotos((p) => ({ ...p, [m.senderUid]: m.photoURL! }));
-          } else if (photos[m.senderUid] === undefined) {
-            const uSnap = await getDoc(doc(db, 'users', m.senderUid));
-            setPhotos((p) => ({
-              ...p,
-              [m.senderUid]:
-                uSnap.exists() ? (uSnap.data() as any).photoURL ?? null : null,
-            }));
-          }
+      snap => {
+        const arr: Msg[] = snap.docs.map(d => {
+          const m = { id: d.id, ...(d.data() as any) } as Msg;
+          if (!m.senderRole) m.senderRole = 'member';   // legacy fallback
+          if (m.photoURL) photos.current[m.senderUid] = m.photoURL;
+          return m;
         });
+        setMsgs(arr);
+        setLoad(false);
       },
-      (err) => console.warn('messages listener', err.code)
+      err => {
+        console.warn('messages listener', err.code, err.message);
+        setLoad(false);  // avoid spinner freeze
+      }
     );
     return unsub;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gymId]);
 
-  /* send message (includes photoURL) */
-  const sendMessage = useCallback(async () => {
+  /* send */
+  const send = useCallback(async () => {
     if (!input.trim() || !gymId) return;
     await addDoc(collection(db, 'gyms', gymId, 'messages'), {
       text: input.trim(),
-      senderUid: user.uid,
+      senderUid:  user.uid,
       senderName: user.displayName || 'Anonymous',
-      photoURL: user.photoURL ?? null,
-      createdAt: serverTimestamp(),
+      senderRole: myRole,
+      photoURL:   user.photoURL ?? null,
+      createdAt:  serverTimestamp(),
     });
     setInput('');
-    setTimeout(
-      () => listRef.current?.scrollToOffset({ offset: 0, animated: true }),
-      100
-    );
-  }, [input, gymId, user]);
+    setTimeout(() => listRef.current?.scrollToOffset({ offset: 0 }), 100);
+  }, [input, gymId, user, myRole]);
 
-  /* avatar helper */
-  const Avatar = ({ uri, name }: { uri?: string | null; name: string }) =>
-    uri ? (
-      <Image source={{ uri }} style={styles.avatar} />
-    ) : (
-      <View style={[styles.avatar, styles.avatarFallback]}>
-        <Text style={styles.initials}>
-          {name
-            .split(' ')
-            .map((w) => w[0]?.toUpperCase())
-            .join('')
-            .slice(0, 2)}
-        </Text>
+  /* helpers */
+  const Avatar = ({ uri, name }: { uri?: string|null; name:string }) => uri ? (
+    <Image source={{ uri }} style={styles.avatar}/>
+  ) : (
+    <View style={[styles.avatar, styles.fallback]}>
+      <Text style={styles.init}>{name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}</Text>
+    </View>
+  );
+
+  const Row = ({ item }: { item: Msg }) => {
+    const me   = item.senderUid === user.uid;
+    const badg = ROLE_BADGE[item.senderRole ?? ''];
+    const uri  = photos.current[item.senderUid];
+
+    if (me) return (
+      <View style={[styles.row,{justifyContent:'flex-end'}]}>
+        <View style={[styles.bub,styles.right]}>
+          <Text style={styles.msg}>{item.text}</Text>
+          <Text style={styles.time}>{fmt(item.createdAt)}</Text>
+        </View>
       </View>
     );
 
-  /* row renderer */
-  const renderItem = ({ item }: { item: ChatMessage }) => {
-    const isMe = item.senderUid === user.uid;
-    const uri = item.photoURL ?? photos[item.senderUid];
-
-    /* ── your own message: right-aligned bubble ── */
-    if (isMe) {
-      return (
-        <View style={[styles.row, { justifyContent: 'flex-end' }]}>
-          <View style={[styles.bubble, styles.bubbleRight]}>
-            <Text style={styles.msg}>{item.text}</Text>
-            <Text style={styles.time}>
-              {item.createdAt
-                ?.toDate()
-                .toLocaleTimeString(undefined, {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-            </Text>
-          </View>
-        </View>
-      );
-    }
-
-    /* ── other user: avatar + bubble ── */
     return (
       <View style={styles.row}>
-        <Avatar uri={uri} name={item.senderName} />
-        <View style={[styles.bubble, styles.bubbleLeft]}>
-          <Text style={styles.name}>{item.senderName}</Text>
+        <Avatar uri={uri} name={item.senderName}/>
+        <View style={[styles.bub,styles.left]}>
+          <View style={styles.nameRow}>
+            <Text style={styles.name}>{item.senderName}</Text>
+            {badg && (
+              <View style={[styles.badge,{backgroundColor:badg.bg}]}>
+                <Text style={styles.badgeTxt}>{badg.label}</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.msg}>{item.text}</Text>
-          <Text style={styles.time}>
-            {item.createdAt
-              ?.toDate()
-              .toLocaleTimeString(undefined, {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-          </Text>
+          <Text style={styles.time}>{fmt(item.createdAt)}</Text>
         </View>
       </View>
     );
   };
 
-  /* loading + no-gym handling */
+  /* loading / no gym */
   if (loading)
-    return (
-      <LinearGradient colors={BG_GRADIENT} style={styles.full}>
-        <ActivityIndicator size="large" color="#fff" />
-      </LinearGradient>
-    );
+    return <Gradient><ActivityIndicator size="large" color="#fff" /></Gradient>;
 
   if (!gymId)
     return (
-      <LinearGradient colors={BG_GRADIENT} style={styles.full}>
-        <SafeAreaView style={styles.flexCenter}>
-          <MaterialCommunityIcons name="dumbbell" size={72} color="#c7d2fe" />
-          <Text style={styles.noGymTitle}>No gym selected</Text>
-          <Text style={styles.noGymDesc}>
-            Join a gym to unlock community chat, bookings, and more.
-          </Text>
-
-          <Pressable
-            onPress={() => router.push('/profile')}
-            style={styles.joinBtn}
-            android_ripple={{ color: '#c7d2fe' }}
-          >
-            <MaterialCommunityIcons name="account-edit" size={20} color="#4f46e5" />
-            <Text style={styles.joinTxt}>Open Profile</Text>
+      <Gradient>
+        <SafeAreaView style={styles.center}>
+          <AntDesign name="team" size={72} color="#c7d2fe" />
+          <Text style={styles.noTitle}>No gym selected</Text>
+          <Text style={styles.noDesc}>Join a gym to unlock community chat.</Text>
+          <Pressable style={styles.profileBtn} onPress={()=>router.push('/profile')}>
+            <AntDesign name="user" size={20} color={PRIMARY}/>
+            <Text style={styles.profileTxt}>Open Profile</Text>
           </Pressable>
         </SafeAreaView>
-      </LinearGradient>
+      </Gradient>
     );
 
-  /* main UI */
+  /* main */
   return (
-    <LinearGradient colors={BG_GRADIENT} style={styles.full}>
-      <SafeAreaView style={styles.flex}>
-        {/* in-app header */}
-        <View style={styles.header}>
-          <Text style={styles.headerText}>{gymName}</Text>
-        </View>
-
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={90}
-        >
-          <FlatList
-            ref={listRef}
-            data={messages}
-            renderItem={renderItem}
-            keyExtractor={(item) => item.id}
-            inverted
-            contentContainerStyle={styles.list}
-          />
-
+    <Gradient>
+      <SafeAreaView style={{flex:1}}>
+        <FlatList
+          ref={listRef}
+          data={msgs}
+          renderItem={Row}
+          keyExtractor={m=>m.id}
+          inverted
+          contentContainerStyle={styles.list}
+        />
+        <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} keyboardVerticalOffset={90}>
           <View style={styles.inputBar}>
             <TextInput
               style={styles.input}
@@ -264,101 +206,59 @@ export default function CommunityScreen() {
               placeholderTextColor="rgba(255,255,255,0.7)"
               value={input}
               onChangeText={setInput}
-              onSubmitEditing={sendMessage}
+              onSubmitEditing={send}
               returnKeyType="send"
             />
-            <Pressable style={styles.sendBtn} onPress={sendMessage}>
-              <AntDesign name="arrowup" size={20} color="#fff" />
+            <Pressable style={styles.send} onPress={send}>
+              <AntDesign name="arrowup" size={20} color="#fff"/>
             </Pressable>
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
-    </LinearGradient>
+    </Gradient>
   );
 }
 
-/* ─── styles ─────────────────────────────────────────────────────────── */
+/* ---------- helpers ---------- */
+const Gradient = ({children}:{children:React.ReactNode})=>(
+  <LinearGradient colors={GRADIENT} style={{flex:1}}>{children}</LinearGradient>
+);
+
+const fmt = (t:any)=>t?.toDate().toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
+
+/* ---------- styles ---------- */
 const styles = StyleSheet.create({
-  full: { flex: 1 },
-  flex: { flex: 1 },
+  /* generic */
+  list:{padding:12,paddingBottom:8},
+  row:{flexDirection:'row',alignItems:'flex-end',marginBottom:6},
+  center:{flex:1,justifyContent:'center',alignItems:'center',padding:32},
 
-  /* no-gym UI */
-  flexCenter: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 },
-  noGymTitle: { color: '#e0e7ff', fontSize: 22, fontWeight: '700', marginTop: 12 },
-  noGymDesc: { color: '#cbd5e1', fontSize: 15, textAlign: 'center', marginTop: 6, lineHeight: 22 },
-  joinBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    marginTop: 26,
-    paddingHorizontal: 22,
-    paddingVertical: 12,
-    borderRadius: 26,
-  },
-  joinTxt: { marginLeft: 8, color: '#4f46e5', fontWeight: '600', letterSpacing: 0.3 },
+  /* no gym */
+  noTitle:{fontSize:22,color:'#e0e7ff',fontWeight:'700',marginTop:12},
+  noDesc:{color:'#cbd5e1',textAlign:'center',marginTop:6,lineHeight:22},
+  profileBtn:{flexDirection:'row',alignItems:'center',backgroundColor:'#fff',marginTop:26,paddingHorizontal:24,paddingVertical:12,borderRadius:26},
+  profileTxt:{marginLeft:8,color:PRIMARY,fontWeight:'600'},
 
-  /* chat header */
-  header: { alignItems: 'center', paddingVertical: 8 },
-  headerText: {
-    color: '#c7d2fe',
-    fontSize: 17,
-    fontWeight: '600',
-    letterSpacing: 0.3,
-  },
+  /* avatar */
+  avatar:{width:AVSZ,height:AVSZ,borderRadius:AVSZ/2,marginRight:6},
+  fallback:{backgroundColor:'#475569',justifyContent:'center',alignItems:'center'},
+  init:{color:'#fff',fontWeight:'600'},
 
-  list: { paddingHorizontal: 12, paddingBottom: 8 },
+  /* bubble */
+  bub:{maxWidth:'75%',borderRadius:16,padding:12},
+  left:{backgroundColor:'rgba(255,255,255,0.2)'},
+  right:{backgroundColor:PRIMARY},
 
-  row: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 6 },
+  nameRow:{flexDirection:'row',alignItems:'center',marginBottom:2},
+  name:{color:'#d1d5db',fontSize:12,fontWeight:'600'},
+  badge:{marginLeft:6,borderRadius:6,paddingHorizontal:6,paddingVertical:2},
+  badgeTxt:{color:'#1e293b',fontSize:10,fontWeight:'700'},
 
-  avatar: {
-    width: AVATAR_SIZE,
-    height: AVATAR_SIZE,
-    borderRadius: AVATAR_SIZE / 2,
-    marginHorizontal: 6,
-  },
-  avatarFallback: {
-    backgroundColor: '#475569',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  initials: { color: '#fff', fontWeight: '600' },
+  msg:{color:'#fff',fontSize:15},
+  time:{color:'rgba(255,255,255,0.7)',fontSize:10,marginTop:4,textAlign:'right'},
 
-  bubble: { maxWidth: '75%', borderRadius: 16, padding: 12 },
-  bubbleLeft: { backgroundColor: 'rgba(255,255,255,0.2)' },
-  bubbleRight: { backgroundColor: PRIMARY },
-
-  name: { color: '#d1d5db', fontSize: 12, marginBottom: 4 },
-  msg: { color: '#fff', fontSize: 15 },
-  time: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 10,
-    marginTop: 4,
-    textAlign: 'right',
-  },
-
-  inputBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  input: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    color: '#fff',
-    fontSize: 15,
-  },
-  sendBtn: {
-    marginLeft: 8,
-    backgroundColor: PRIMARY,
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  /* input */
+  inputBar:{flexDirection:'row',alignItems:'center',padding:12,backgroundColor:'rgba(0,0,0,0.3)'},
+  input:{flex:1,backgroundColor:'rgba(255,255,255,0.25)',borderRadius:20,paddingHorizontal:14,paddingVertical:8,color:'#fff',fontSize:15},
+  send:{marginLeft:8,backgroundColor:PRIMARY,width:38,height:38,borderRadius:19,justifyContent:'center',alignItems:'center'},
 });
