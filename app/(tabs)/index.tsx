@@ -1,4 +1,5 @@
 // app/(tabs)/index.tsx
+
 import React, { useEffect, useState } from 'react';
 import {
   View,
@@ -8,10 +9,12 @@ import {
   ScrollView,
   Pressable,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import QRCode from 'react-native-qrcode-svg';
 import {
   collection,
   doc,
@@ -20,11 +23,11 @@ import {
   where,
   orderBy,
   limit,
+  getDoc,
   Timestamp,
 } from 'firebase/firestore';
 import { auth, db } from '../../lib/firebaseConfig';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import QRCode from 'react-native-qrcode-svg';
 
 const { width } = Dimensions.get('window');
 const METRIC = (width - 48) / 3;
@@ -36,7 +39,8 @@ export default function HomeScreen() {
   const [gymId, setGymId] = useState<string | null>(null);
   const [stats, setStats] = useState<{ steps?: number; calories?: number; minutes?: number }>({});
   const [bookings, setBookings] = useState<any[]>([]);
-  const [messages, setMessages] = useState<any[]>([]);
+  const [staffNames, setStaffNames] = useState<Record<string, string>>({});
+  const [messages, setMessages] = useState<any[]>([]);          // community chat
   const [announcements, setAnnouncements] = useState<any[]>([]);
 
   /* auth listener */
@@ -53,7 +57,7 @@ export default function HomeScreen() {
     return unsub;
   }, [user]);
 
-  /* gym-dependent announcements */
+  /* gym announcements */
   useEffect(() => {
     if (!gymId) return;
     const q = query(
@@ -61,33 +65,66 @@ export default function HomeScreen() {
       where('gymId', '==', gymId),
       orderBy('createdAt', 'desc')
     );
-    const unsub = onSnapshot(q,
+    return onSnapshot(
+      q,
       s => setAnnouncements(s.docs.map(d => ({ id: d.id, ...(d.data() as any) }))),
       e => console.warn('announcements', e.code)
     );
-    return unsub;
   }, [gymId]);
 
-  /* non-gym data (bookings, messages) */
+  /* community chat: last 5 messages under gyms/{gymId}/messages */
+  useEffect(() => {
+    if (!gymId) return;
+    const q = query(
+      collection(db, 'gyms', gymId, 'messages'),
+      orderBy('createdAt', 'desc'),
+      limit(5)
+    );
+    return onSnapshot(
+      q,
+      s => setMessages(s.docs.map(d => ({ id: d.id, ...(d.data() as any) }))),
+      e => console.warn('community messages', e.code)
+    );
+  }, [gymId]);
+
+  /* your bookings history */
   useEffect(() => {
     if (!user) return;
 
     const unsubBook = onSnapshot(
-      query(collection(db, 'bookings'), where('userId', '==', user.uid)),
-      s => {
-        const arr = s.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        arr.sort((a, b) => (a.start as Timestamp).toDate().getTime() - (b.start as Timestamp).toDate().getTime());
+      query(
+        collection(db, 'bookings'),
+        where('userId', '==', user.uid),
+        orderBy('start')
+      ),
+      snap => {
+        const arr = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
         setBookings(arr);
       }
     );
 
-    const unsubMsg = onSnapshot(
-      query(collection(db, 'messages'), orderBy('createdAt', 'desc'), limit(3)),
-      s => setMessages(s.docs.map(d => ({ id: d.id, ...(d.data() as any) })))
-    );
-
-    return () => { unsubBook(); unsubMsg(); };
+    return () => unsubBook();
   }, [user]);
+
+  /* fetch each trainer’s name for your bookings */
+  useEffect(() => {
+    const ids = Array.from(new Set(bookings.map(b => b.staffId).filter(Boolean)));
+    if (ids.length === 0) {
+      setStaffNames({});
+      return;
+    }
+    Promise.all(
+      ids.map(id =>
+        getDoc(doc(db, 'trainers', id)).then(snap =>
+          snap.exists() ? (snap.data() as any).name : '–'
+        )
+      )
+    ).then(names => {
+      const map: Record<string, string> = {};
+      ids.forEach((id, i) => (map[id] = names[i]));
+      setStaffNames(map);
+    });
+  }, [bookings]);
 
   if (!user) return null;
 
@@ -96,81 +133,99 @@ export default function HomeScreen() {
 
   return (
     <LinearGradient colors={['#7c3aed', '#4f46e5', '#312e81']} style={styles.bg}>
-      {/* greeting */}
       <Text style={styles.hi}>{hi}, {user.displayName ?? 'Athlete'} 👋</Text>
       <Text style={styles.sub}>Here’s your snapshot today</Text>
 
-      {/* health metrics */}
       <View style={styles.metricRow}>
-        <Metric icon="walk"      label="Steps"    value={stats.steps}    />
-        <Metric icon="fire"      label="Calories" value={stats.calories} />
-        <Metric icon="run-fast"  label="Minutes"  value={stats.minutes} />
+        <Metric icon="walk" label="Steps" value={stats.steps} />
+        <Metric icon="fire" label="Calories" value={stats.calories} />
+        <Metric icon="run-fast" label="Minutes" value={stats.minutes} />
       </View>
 
-      {/* ───────── main body ───────── */}
       {!gymId ? (
-        /* No gym selected */
-        <View style={styles.noGymWrap}>
-          <MaterialCommunityIcons name="dumbbell" size={68} color="#c7d2fe" />
-          <Text style={styles.noGymTitle}>No gym selected</Text>
-          <Text style={styles.noGymDesc}>
-            Join a gym to see bookings, community updates, and announcements.
-          </Text>
-
-          <Pressable
-            style={styles.joinBtn}
-            android_ripple={{ color: '#c7d2fe' }}
-            onPress={() => router.push('/profile')}
-          >
-            <MaterialCommunityIcons name="account-edit" size={20} color="#4f46e5" />
-            <Text style={styles.joinTxt}>Open Profile</Text>
-          </Pressable>
-        </View>
+        <NoGym router={router} />
       ) : (
-        /* Gym selected */
         <>
           <ScrollView showsVerticalScrollIndicator={false}>
-            {/* bookings */}
+
+            {/* ─── All Bookings ────────────────── */}
             <Section title="All Bookings">
-              {bookings.length
-                ? bookings.map(b => (
-                    <Line key={b.id} icon="calendar" title={b.title ?? 'Gym Booking'} sub={tsToStr(b.start)} />
-                  ))
-                : <Empty text="No bookings yet" />}
-            </Section>
-
-            {/* community */}
-            <Section title="Community Updates">
-              {messages.length
-                ? messages.map(m => (
-                    <Line key={m.id} icon="message" title={m.senderName ?? 'Member'} sub={m.text} />
-                  ))
-                : <Empty text="No new messages" />}
-            </Section>
-
-            {/* announcements */}
-            <Section title="Announcements">
-              {announcements.length
-                ? announcements.map(a => (
-                    <View key={a.id} style={styles.announceCard}>
-                      <Text style={styles.announceTitle}>{a.title}</Text>
-                      <Text style={styles.announceDesc}>{a.description}</Text>
-                      <Text style={styles.announceTime}>
-                        {a.createdAt?.toDate().toLocaleString(undefined, {
-                          month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+              {bookings.length > 0 ? bookings.map(b => {
+                const start = (b.start as Timestamp).toDate();
+                const withName = b.staffId ? staffNames[b.staffId] : null;
+                return (
+                  <View key={b.id} style={styles.lineItem}>
+                    <MaterialCommunityIcons
+                      name="calendar"
+                      size={22}
+                      color="#4f46e5"
+                      style={{ marginRight: 12 }}
+                    />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.lineTitle}>
+                        {b.title ?? 'Gym Booking'}
+                      </Text>
+                      <Text style={styles.lineSub} numberOfLines={1}>
+                        {start.toLocaleString(undefined, {
+                          weekday: 'short',
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
                         })}
+                        {withName ? ` · With: ${withName}` : ''}
                       </Text>
                     </View>
-                  ))
-                : <Empty text="No announcements" />}
+                  </View>
+                );
+              }) : <Empty text="No bookings yet" />}
             </Section>
+
+            {/* ─── Community Updates ───────────── */}
+            <Section title="Community Updates">
+              {messages.length > 0 ? messages.map(m => (
+                <Line
+                  key={m.id}
+                  icon="message"
+                  title={m.senderName ?? 'Member'}
+                  sub={m.text}
+                />
+              )) : <Empty text="No community messages" />}
+            </Section>
+
+            {/* ─── Announcements ───────────────── */}
+            <Section title="Announcements">
+              {announcements.length > 0 ? announcements.map(a => (
+                <View key={a.id} style={styles.announceCard}>
+                  <Text style={styles.announceTitle}>{a.title}</Text>
+                  <Text style={styles.announceDesc}>{a.description}</Text>
+                  <Text style={styles.announceTime}>
+                    {a.createdAt?.toDate().toLocaleString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </Text>
+                </View>
+              )) : <Empty text="No announcements" />}
+            </Section>
+
           </ScrollView>
 
-          {/* FABs – shown only when gym exists */}
-          <Pressable style={styles.fabQR} android_ripple={{ color: '#c7d2fe', radius: 34 }} onPress={() => router.push('/qr')}>
+          {/* FABs */}
+          <Pressable
+            style={styles.fabQR}
+            android_ripple={{ color: '#c7d2fe', radius: 34 }}
+            onPress={() => router.push('/qr')}
+          >
             <QRCode value={user.uid} size={38} color="#4f46e5" backgroundColor="transparent" />
           </Pressable>
-          <Pressable style={styles.fabBook} android_ripple={{ color: '#c7d2fe', radius: 34 }} onPress={() => router.push('/bookings')}>
+          <Pressable
+            style={styles.fabBook}
+            android_ripple={{ color: '#c7d2fe', radius: 34 }}
+            onPress={() => router.push('/bookings')}
+          >
             <MaterialCommunityIcons name="calendar-plus" size={32} color="#4f46e5" />
           </Pressable>
         </>
@@ -179,11 +234,28 @@ export default function HomeScreen() {
   );
 }
 
-/* ─── sub-components ────────────────────────────────────────── */
+const NoGym = ({ router }: { router: ReturnType<typeof useRouter> }) => (
+  <View style={styles.noGymWrap}>
+    <MaterialCommunityIcons name="dumbbell" size={68} color="#c7d2fe" />
+    <Text style={styles.noGymTitle}>No gym selected</Text>
+    <Text style={styles.noGymDesc}>
+      Join a gym to see bookings, community updates, and announcements.
+    </Text>
+    <Pressable
+      style={styles.joinBtn}
+      onPress={() => router.push('/profile')}
+      android_ripple={{ color: '#c7d2fe' }}
+    >
+      <MaterialCommunityIcons name="account-edit" size={20} color="#4f46e5" />
+      <Text style={styles.joinTxt}>Open Profile</Text>
+    </Pressable>
+  </View>
+);
+
 const Metric = ({ icon, label, value }: any) => (
   <View style={styles.metric}>
     <MaterialCommunityIcons name={icon} size={22} color="#fff" />
-    {value === undefined
+    {value == null
       ? <ActivityIndicator color="#fff" style={{ marginVertical: 4 }} />
       : <Text style={styles.metricVal}>{value}</Text>}
     <Text style={styles.metricLbl}>{label}</Text>
@@ -209,10 +281,6 @@ const Line = ({ icon, title, sub }: any) => (
 
 const Empty = ({ text }: any) => <Text style={styles.empty}>{text}</Text>;
 
-const tsToStr = (ts: Timestamp) =>
-  ts.toDate().toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' });
-
-/* ─── styles ────────────────────────────────────────────────── */
 const styles = StyleSheet.create({
   bg: { flex: 1, paddingTop: 60, paddingHorizontal: 24 },
   hi: { color: '#fff', fontSize: 28, fontWeight: '700' },
@@ -230,8 +298,11 @@ const styles = StyleSheet.create({
   joinTxt: { marginLeft: 8, color: '#4f46e5', fontWeight: '600', letterSpacing: 0.3 },
 
   secTitle: { color: '#cbd5e1', fontSize: 15, fontWeight: '600', marginBottom: 12 },
-  lineItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 18, padding: 12, marginBottom: 10,
-    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 3 } },
+  lineItem: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff', borderRadius: 18, padding: 12, marginBottom: 10,
+    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }
+  },
   lineTitle: { fontWeight: '600', color: '#1e293b' },
   lineSub: { color: '#64748b', fontSize: 13, marginTop: 2 },
 
@@ -242,6 +313,6 @@ const styles = StyleSheet.create({
 
   empty: { color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', marginBottom: 4 },
 
-  fabQR:  { position: 'absolute', bottom: 24,  right: 24, width: 72, height: 72, borderRadius: 36, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  fabBook:{ position: 'absolute', bottom: 110, right: 24, width: 72, height: 72, borderRadius: 36, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  fabQR: { position: 'absolute', bottom: 24, right: 24, width: 72, height: 72, borderRadius: 36, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
+  fabBook: { position: 'absolute', bottom: 110, right: 24, width: 72, height: 72, borderRadius: 36, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
 });
