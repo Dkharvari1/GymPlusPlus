@@ -4,13 +4,13 @@ import React, { useEffect, useState, useMemo } from 'react';
 import {
     View,
     Text,
-    TextInput,
-    StyleSheet,
     ScrollView,
     ActivityIndicator,
     Pressable,
     Modal,
     Dimensions,
+    TextInput,
+    StyleSheet,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -24,6 +24,8 @@ import {
     serverTimestamp,
     Timestamp,
     getDocs,
+    doc,
+    getDoc,
 } from 'firebase/firestore';
 import { db, auth } from '../../lib/firebaseConfig';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -49,6 +51,7 @@ export default function DashboardScreen() {
     // calendar
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [bookingsForDate, setBookingsForDate] = useState<any[]>([]);
+    const [staffMap, setStaffMap] = useState<Record<string, string>>({});
     const [loadingDate, setLoadingDate] = useState(false);
 
     // staff modal
@@ -99,6 +102,7 @@ export default function DashboardScreen() {
     // 3️⃣ booking counts & today’s & upcoming
     useEffect(() => {
         if (!gym) return;
+        // total
         const qB = query(collection(db, 'bookings'), where('gymId', '==', gym.id));
         const unsubB = onSnapshot(qB, snap => setBookingsCount(snap.size));
 
@@ -116,7 +120,7 @@ export default function DashboardScreen() {
             setTodayBookings(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
         });
 
-        // next 30
+        // upcoming
         const qU = query(
             collection(db, 'bookings'),
             where('gymId', '==', gym.id),
@@ -131,20 +135,22 @@ export default function DashboardScreen() {
         return () => { unsubB(); unsubT(); unsubU(); };
     }, [gym]);
 
-    // 4️⃣ peak-hour heatmap
-    const hoursCount = useMemo(() => {
+    // 4️⃣ heatmap data (today or selected)
+    const heatmapData = useMemo(() => {
+        const source = selectedDate ? bookingsForDate : todayBookings;
         const counts: Record<number, number> = {};
-        todayBookings.forEach(b => {
+        source.forEach(b => {
             const h = (b.start as Timestamp).toDate().getHours();
             counts[h] = (counts[h] || 0) + 1;
         });
         return counts;
-    }, [todayBookings]);
+    }, [selectedDate, bookingsForDate, todayBookings]);
 
-    // 5️⃣ fetch bookings for selected date (manual parse!)
+    // 5️⃣ fetch bookings + staff for selected date
     useEffect(() => {
         if (!selectedDate || !gym) {
             setBookingsForDate([]);
+            setStaffMap({});
             return;
         }
         setLoadingDate(true);
@@ -161,7 +167,21 @@ export default function DashboardScreen() {
                 orderBy('start')
             );
             const snap = await getDocs(qD);
-            setBookingsForDate(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+            const bkgs = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+            setBookingsForDate(bkgs);
+
+            // now batch-load staff names
+            const staffIds = Array.from(new Set(bkgs.map(b => b.staffId).filter(Boolean)));
+            const staffDocs = await Promise.all(
+                staffIds.map(sid => getDoc(doc(db, 'trainers', sid)))
+            );
+            const map: Record<string, string> = {};
+            staffDocs.forEach(sd => {
+                if (sd.exists()) {
+                    map[sd.id] = sd.data().name;
+                }
+            });
+            setStaffMap(map);
             setLoadingDate(false);
         })();
     }, [selectedDate, gym]);
@@ -177,35 +197,26 @@ export default function DashboardScreen() {
                 role: staffRole,
                 createdAt: serverTimestamp(),
             });
-            setStaffName('');
-            setStaffRole('trainer');
+            setStaffName(''); setStaffRole('trainer');
             setShowStaffModal(false);
-        } catch (e: any) {
-            console.error('add staff error', e);
-        } finally {
-            setPostingStaff(false);
-        }
+        } catch (e) { console.error(e) }
+        setPostingStaff(false);
     };
 
     if (loading) {
-        return (
-            <View style={styles.center}>
-                <ActivityIndicator size="large" color="#fff" />
-            </View>
-        );
+        return <View style={styles.center}><ActivityIndicator size="large" color="#fff" /></View>;
     }
 
     return (
         <LinearGradient
             colors={['#312e81', '#4f46e5', '#7c3aed']}
             style={styles.bg}
-            start={{ x: 0.2, y: 0 }}
-            end={{ x: 0.8, y: 1 }}
+            start={{ x: 0.2, y: 0 }} end={{ x: 0.8, y: 1 }}
         >
             <ScrollView contentContainerStyle={styles.container}>
                 <Text style={styles.title}>{gym?.name}</Text>
 
-                {/* Summary cards */}
+                {/* summary cards */}
                 <View style={styles.row}>
                     <View style={styles.card}>
                         <MaterialCommunityIcons name="account-group" size={28} color="#4f46e5" />
@@ -218,7 +229,6 @@ export default function DashboardScreen() {
                         <Text style={styles.cardValue}>{newMembersCount}</Text>
                     </View>
                 </View>
-
                 <View style={styles.row}>
                     <View style={styles.card}>
                         <MaterialCommunityIcons name="calendar-check" size={28} color="#4f46e5" />
@@ -232,96 +242,80 @@ export default function DashboardScreen() {
                     </View>
                 </View>
 
-                {/* Clickable calendar */}
+                {/* calendar */}
                 <Text style={styles.sectionTitle}>Upcoming Sessions</Text>
                 <Calendar
                     style={styles.calendar}
                     onDayPress={(day: DateData) => setSelectedDate(day.dateString)}
                     markedDates={{
                         ...upcomingBookings.reduce((m, b) => {
-                            const d = (b.start as Timestamp)
-                                .toDate()
-                                .toISOString()
-                                .slice(0, 10);
-                            m[d] = { marked: true, dotColor: '#4f46e5' };
-                            return m;
+                            const d = (b.start as Timestamp).toDate().toISOString().slice(0, 10);
+                            m[d] = { marked: true, dotColor: '#4f46e5' }; return m;
                         }, {} as Record<string, any>),
-                        ...(selectedDate
-                            ? { [selectedDate]: { selected: true, selectedColor: '#7c3aed' } }
-                            : {}),
+                        ...(selectedDate ? { [selectedDate]: { selected: true, selectedColor: '#7c3aed' } } : {})
                     }}
                 />
 
-                {/* Bookings on that date */}
+                {/* sessions */}
                 {selectedDate && (
                     <View style={{ width: '100%' }}>
                         <Text style={styles.subTitle}>Sessions on {selectedDate}</Text>
-
-                        {loadingDate ? (
-                            <ActivityIndicator color="#fff" />
-                        ) : bookingsForDate.length === 0 ? (
-                            <Text style={styles.empty}>None</Text>
-                        ) : (
-                            bookingsForDate.map(b => {
-                                const t = (b.start as Timestamp).toDate();
-                                return (
-                                    <View key={b.id} style={styles.updateCard}>
-                                        <Text style={styles.updateTitle}>{b.title}</Text>
-                                        <Text style={styles.updateTime}>
-                                            {t.toLocaleTimeString(undefined, {
-                                                hour: '2-digit',
-                                                minute: '2-digit',
-                                            })}
-                                        </Text>
-                                    </View>
-                                );
-                            })
-                        )}
+                        {loadingDate
+                            ? <ActivityIndicator color="#fff" />
+                            : bookingsForDate.length === 0
+                                ? <Text style={styles.empty}>None</Text>
+                                : bookingsForDate.map(b => {
+                                    const t = (b.start as Timestamp).toDate();
+                                    return (
+                                        <View key={b.id} style={styles.updateCard}>
+                                            <Text style={styles.updateTitle}>{b.title}</Text>
+                                            <Text style={styles.updateTime}>
+                                                {t.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                                            </Text>
+                                            <Text style={styles.updateBy}>
+                                                With: {staffMap[b.staffId] || '—'}
+                                            </Text>
+                                        </View>
+                                    );
+                                })
+                        }
                     </View>
                 )}
 
-                {/* Peak hours heatmap */}
-                <Text style={styles.sectionTitle}>Peak Hours (Today)</Text>
+                {/* peak hours */}
+                <Text style={styles.sectionTitle}>
+                    Peak Hours ({selectedDate || 'Today'})
+                </Text>
                 <ScrollView horizontal contentContainerStyle={styles.heatmap}>
-                    {Array.from({ length: 24 }, (_, h) => h).map(h => {
-                        const cnt = hoursCount[h] || 0;
-                        return (
-                            <View key={h} style={styles.barWrapper}>
-                                <View
-                                    style={{
-                                        ...styles.bar,
-                                        height: 10 + cnt * 6,
-                                        backgroundColor:
-                                            cnt > 0 ? '#4f46e5' : 'rgba(255,255,255,0.2)',
-                                    }}
-                                />
-                                <Text style={styles.barLabel}>{h}</Text>
-                            </View>
-                        );
-                    })}
+                    {Array.from({ length: 24 }, (_, h) => h).map(h => (
+                        <View key={h} style={styles.barWrapper}>
+                            <View
+                                style={{
+                                    ...styles.bar,
+                                    height: 10 + (heatmapData[h] || 0) * 6,
+                                    backgroundColor: (heatmapData[h] || 0) > 0 ? '#4f46e5' : 'rgba(255,255,255,0.2)',
+                                }}
+                            />
+                            <Text style={styles.barLabel}>{h}</Text>
+                        </View>
+                    ))}
                 </ScrollView>
 
-                {/* Quick actions */}
+                {/* quick actions */}
                 <Text style={styles.sectionTitle}>Quick Actions</Text>
                 <View style={styles.row}>
-                    <Pressable
-                        style={styles.actionBtn}
-                        onPress={() => router.push('/(auth)/register')}
-                    >
+                    <Pressable style={styles.actionBtn} onPress={() => router.push('/(auth)/register')}>
                         <MaterialCommunityIcons name="account-plus" size={28} color="#fff" />
                         <Text style={styles.actionTxt}>Add Member</Text>
                     </Pressable>
-                    <Pressable
-                        style={styles.actionBtn}
-                        onPress={() => setShowStaffModal(true)}
-                    >
+                    <Pressable style={styles.actionBtn} onPress={() => setShowStaffModal(true)}>
                         <MaterialCommunityIcons name="account-tie" size={28} color="#fff" />
                         <Text style={styles.actionTxt}>Add Staff</Text>
                     </Pressable>
                 </View>
             </ScrollView>
 
-            {/* Staff modal */}
+            {/* staff modal */}
             <Modal visible={showStaffModal} transparent animationType="fade">
                 <View style={styles.modalOverlay}>
                     <View style={styles.modal}>
@@ -342,19 +336,11 @@ export default function DashboardScreen() {
                             <Picker.Item label="Massage Therapist" value="massage" />
                         </Picker>
                         <View style={styles.modalRow}>
-                            <Pressable
-                                onPress={() => setShowStaffModal(false)}
-                                style={styles.modalBtn}
-                            >
+                            <Pressable onPress={() => setShowStaffModal(false)} style={styles.modalBtn}>
                                 <Text style={styles.modalBtnTxt}>Cancel</Text>
                             </Pressable>
-                            <Pressable
-                                onPress={addStaff}
-                                style={[styles.modalBtn, postingStaff && { opacity: 0.5 }]}
-                            >
-                                <Text style={styles.modalBtnTxt}>
-                                    {postingStaff ? 'Adding…' : 'Add'}
-                                </Text>
+                            <Pressable onPress={addStaff} style={[styles.modalBtn, postingStaff && { opacity: 0.5 }]}>
+                                <Text style={styles.modalBtnTxt}>{postingStaff ? 'Adding…' : 'Add'}</Text>
                             </Pressable>
                         </View>
                     </View>
@@ -366,129 +352,33 @@ export default function DashboardScreen() {
 
 const styles = StyleSheet.create({
     bg: { flex: 1 },
-    center: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: '#312e81',
-    },
-    container: { padding: 24, paddingTop: 80, alignItems: 'center', width: '100%' },
-    title: {
-        fontSize: 28,
-        fontWeight: '700',
-        color: '#fff',
-        marginBottom: 24,
-        textAlign: 'center',
-    },
-
-    row: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        width: '100%',
-        marginBottom: 16,
-    },
-    card: {
-        flex: 1,
-        marginHorizontal: 4,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        borderRadius: 18,
-        padding: 16,
-        alignItems: 'center',
-    },
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#312e81' },
+    container: { padding: 24, paddingTop: 80, alignItems: 'center' },
+    title: { fontSize: 28, fontWeight: '700', color: '#fff', marginBottom: 24, textAlign: 'center' },
+    row: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 16 },
+    card: { flex: 1, marginHorizontal: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 18, padding: 16, alignItems: 'center' },
     cardLabel: { color: '#e0e7ff', fontSize: 14, marginTop: 4 },
     cardValue: { color: '#fff', fontSize: 20, fontWeight: '700' },
-
-    sectionTitle: {
-        width: '100%',
-        color: '#e0e7ff',
-        fontSize: 18,
-        fontWeight: '600',
-        marginTop: 24,
-        marginBottom: 8,
-    },
-
+    sectionTitle: { width: '100%', color: '#e0e7ff', fontSize: 18, fontWeight: '600', marginTop: 24, marginBottom: 8 },
     calendar: { width: '100%', borderRadius: 12, overflow: 'hidden' },
-
-    subTitle: {
-        color: '#cbd5e1',
-        fontSize: 15,
-        fontWeight: '500',
-        marginTop: 12,
-        marginBottom: 8,
-    },
-    empty: {
-        color: '#94a3b8',
-        fontStyle: 'italic',
-        textAlign: 'center',
-        marginBottom: 8,
-    },
-    updateCard: {
-        width: '100%',
-        backgroundColor: 'rgba(255,255,255,0.15)',
-        borderRadius: 12,
-        padding: 12,
-        marginBottom: 8,
-    },
+    subTitle: { color: '#cbd5e1', fontSize: 15, fontWeight: '500', marginTop: 12, marginBottom: 8 },
+    empty: { color: '#94a3b8', fontStyle: 'italic', textAlign: 'center', marginBottom: 8 },
+    updateCard: { width: '100%', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 12, padding: 12, marginBottom: 8 },
     updateTitle: { color: '#fff', fontWeight: '600' },
     updateTime: { color: '#c7d2fe', fontSize: 12, marginTop: 4, textAlign: 'right' },
-
+    updateBy: { color: '#e0e7ff', fontSize: 12, marginTop: 2, fontStyle: 'italic' },
     heatmap: { paddingVertical: 12 },
     barWrapper: { width: BAR_WIDTH, alignItems: 'center', marginHorizontal: 2 },
     bar: { width: BAR_WIDTH, borderRadius: 4 },
     barLabel: { color: '#e0e7ff', fontSize: 10, marginTop: 4 },
-
-    actionBtn: {
-        flex: 1,
-        marginHorizontal: 4,
-        backgroundColor: '#4f46e5',
-        borderRadius: 18,
-        paddingVertical: 16,
-        alignItems: 'center',
-    },
+    actionBtn: { flex: 1, marginHorizontal: 4, backgroundColor: '#4f46e5', borderRadius: 18, paddingVertical: 16, alignItems: 'center' },
     actionTxt: { color: '#fff', marginTop: 4, fontSize: 14 },
-
-    modalOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: '#0008',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    modal: {
-        width: '80%',
-        backgroundColor: '#312e81',
-        borderRadius: 12,
-        padding: 16,
-    },
-    modalTitle: {
-        color: '#fff',
-        fontSize: 18,
-        fontWeight: '600',
-        marginBottom: 12,
-        textAlign: 'center',
-    },
-    input: {
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        borderRadius: 8,
-        padding: 8,
-        color: '#fff',
-        marginBottom: 12,
-    },
-    picker: {
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        color: '#fff',
-        marginBottom: 12,
-    },
-    modalRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-    },
-    modalBtn: {
-        flex: 1,
-        marginHorizontal: 4,
-        backgroundColor: '#4f46e5',
-        borderRadius: 8,
-        padding: 12,
-        alignItems: 'center',
-    },
+    modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0008', justifyContent: 'center', alignItems: 'center' },
+    modal: { width: '80%', backgroundColor: '#312e81', borderRadius: 12, padding: 16 },
+    modalTitle: { color: '#fff', fontSize: 18, fontWeight: '600', marginBottom: 12, textAlign: 'center' },
+    input: { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8, padding: 8, color: '#fff', marginBottom: 12 },
+    picker: { backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff', marginBottom: 12 },
+    modalRow: { flexDirection: 'row', justifyContent: 'space-between' },
+    modalBtn: { flex: 1, marginHorizontal: 4, backgroundColor: '#4f46e5', borderRadius: 8, padding: 12, alignItems: 'center' },
     modalBtnTxt: { color: '#fff', fontWeight: '600' },
 });
