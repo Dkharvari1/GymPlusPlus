@@ -3,14 +3,14 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
-import { AntDesign } from '@expo/vector-icons';
+import { AntDesign, MaterialCommunityIcons } from '@expo/vector-icons';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../lib/firebaseConfig';
 import YoutubePlayer from 'react-native-youtube-iframe';
 import { ResizeMode, Video } from 'expo-av';
 
 export default function ExerciseDetails() {
-  const { wid } = useLocalSearchParams<{ wid?: string }>();      // workout id
+  const { wid, day } = useLocalSearchParams<{ wid?: string; day?: string }>();
   const [data, setData] = useState<any | null>(null);
   const [playing, setPlaying] = useState(false);
 
@@ -48,10 +48,10 @@ export default function ExerciseDetails() {
         <AntDesign name="arrowleft" size={22} color="#fff" />
       </Pressable>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
         <Text style={s.title}>{data.name}</Text>
 
-        {/* ── video section ─────────────────────────────── */}
+        {/* video */}
         {data.videoId ? (
           <YoutubePlayer
             height={240}
@@ -64,12 +64,12 @@ export default function ExerciseDetails() {
           <Video
             source={{ uri: data.videoUrl }}
             useNativeControls
-            resizeMode={ResizeMode.CONTAIN} 
+            resizeMode={ResizeMode.CONTAIN}
             style={{ width: '100%', height: 220, borderRadius: 12, marginBottom: 20 }}
           />
         ) : null}
 
-        {/* ── metadata ─────────────────────────────────── */}
+        {/* metadata */}
         <Text style={s.sub}>
           Difficulty: <Text style={s.val}>{data.difficulty}</Text>
         </Text>
@@ -85,7 +85,7 @@ export default function ExerciseDetails() {
           </Text>
         )}
 
-        {/* ── instructions ─────────────────────────────── */}
+        {/* instructions */}
         {data.instructions && (
           <>
             <Text style={s.h2}>How to perform</Text>
@@ -93,11 +93,22 @@ export default function ExerciseDetails() {
           </>
         )}
       </ScrollView>
+
+      {/* add to log */}
+      {wid && day && (
+        <Pressable
+          style={s.addBtn}
+          onPress={() => router.push({ pathname:'/workouts/log-exercise', params:{ wid, day } })}
+        >
+          <MaterialCommunityIcons name="plus" size={20} color="#fff" />
+          <Text style={s.addTxt}>Add to log</Text>
+        </Pressable>
+      )}
     </SafeAreaView>
   );
 }
 
-/* ── styles ─────────────────────────────────────────── */
+/* styles */
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#312e81', padding: 24 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#312e81' },
@@ -113,4 +124,17 @@ const s = StyleSheet.create({
   val: { color: '#fff', fontWeight: '600' },
   h2: { color: '#fff', fontSize: 18, fontWeight: '700', marginTop: 22, marginBottom: 8 },
   txt: { color: '#e0e7ff', lineHeight: 22 },
+  addBtn: {
+    position: 'absolute',
+    left: 24,
+    right: 24,
+    bottom: 24,
+    backgroundColor: '#4f46e5',
+    borderRadius: 24,
+    paddingVertical: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addTxt: { color: '#fff', fontWeight: '700', marginLeft: 8 },
 });
