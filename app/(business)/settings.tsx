@@ -1,6 +1,6 @@
 // app/(business)/settings.tsx
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react'
 import {
     View,
     Text,
@@ -12,190 +12,210 @@ import {
     Alert,
     Platform,
     Modal,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import { Picker } from '@react-native-picker/picker';
-import { useRouter } from 'expo-router';
+} from 'react-native'
+import { LinearGradient } from 'expo-linear-gradient'
+import { MaterialCommunityIcons } from '@expo/vector-icons'
+import DateTimePicker from '@react-native-community/datetimepicker'
+import { Picker } from '@react-native-picker/picker'
+import { useRouter } from 'expo-router'
 import {
-    doc,
-    getDoc,
-    onSnapshot,
     collection,
+    doc,
+    onSnapshot,
+    query,
+    where,
     updateDoc,
     addDoc,
     deleteDoc,
     serverTimestamp,
-    query,
-    where,
-} from 'firebase/firestore';
-import { signOut } from 'firebase/auth';
-import { auth, db } from '../../lib/firebaseConfig';
+} from 'firebase/firestore'
+import { signOut } from 'firebase/auth'
+import { auth, db } from '../../lib/firebaseConfig'
 
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
-type Day = typeof DAYS[number];
+const DAYS = [
+    'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+] as const
+type Day = typeof DAYS[number]
 
 export default function GymSettingsScreen() {
-    const router = useRouter();
-    const uid = auth.currentUser?.uid!;
+    const router = useRouter()
+    const uid = auth.currentUser!.uid
 
-    const [gymId, setGymId] = useState<string | null>(null);
-    const [gymData, setGymData] = useState<any>(null);
-    const [loading, setLoading] = useState(true);
+    const [gymId, setGymId] = useState<string | null>(null)
+    const [gymData, setGymData] = useState<any>(null)
+    const [loading, setLoading] = useState(true)
 
-    const [editing, setEditing] = useState(false);
-    const [name, setName] = useState('');
-    const [email, setEmail] = useState('');
-    const [phone, setPhone] = useState('');
+    // form fields
+    const [editing, setEditing] = useState(false)
+    const [name, setName] = useState('')
+    const [email, setEmail] = useState('')
+    const [phone, setPhone] = useState('')
 
     const [hours, setHours] = useState<Record<Day, { open: string; close: string }>>(
-        DAYS.reduce((acc, d) => ({ ...acc, [d]: { open: '', close: '' } }), {} as any)
-    );
-    const [pickerVisible, setPickerVisible] = useState(false);
-    const [pickerDay, setPickerDay] = useState<Day>(DAYS[0]);
-    const [pickerMode, setPickerMode] = useState<'open' | 'close'>('open');
-    const [tempTime, setTempTime] = useState(new Date());
+        DAYS.reduce((acc, d) => {
+            acc[d] = { open: '', close: '' }
+            return acc
+        }, {} as any)
+    )
+    const [pickerVisible, setPickerVisible] = useState(false)
+    const [pickerDay, setPickerDay] = useState<Day>(DAYS[0])
+    const [pickerMode, setPickerMode] = useState<'open' | 'close'>('open')
+    const [tempTime, setTempTime] = useState(new Date())
 
-    const [serviceTypes, setServiceTypes] = useState<{ key: string; label: string }[]>([]);
-    const [newServiceLabel, setNewServiceLabel] = useState('');
+    const [serviceTypes, setServiceTypes] = useState<{ key: string; label: string }[]>([])
+    const [newServiceLabel, setNewServiceLabel] = useState('')
 
-    const [courtTypes, setCourtTypes] = useState<{ key: string; label: string }[]>([]);
-    const [courts, setCourts] = useState<Record<string, number>>({});
-    const [newCourtLabel, setNewCourtLabel] = useState('');
+    const [courtTypes, setCourtTypes] = useState<{ key: string; label: string }[]>([])
+    const [courts, setCourts] = useState<Record<string, number>>({})
+    const [newCourtLabel, setNewCourtLabel] = useState('')
 
-    const [staffList, setStaffList] = useState<any[]>([]);
-    const [showAddStaff, setShowAddStaff] = useState(false);
-    const [newStaffName, setNewStaffName] = useState('');
-    const [newStaffService, setNewStaffService] = useState('');
-    const [postingStaff, setPostingStaff] = useState(false);
+    const [staffList, setStaffList] = useState<any[]>([])
+    const [showAddStaff, setShowAddStaff] = useState(false)
+    const [newStaffName, setNewStaffName] = useState('')
+    const [newStaffService, setNewStaffService] = useState('')
+    const [postingStaff, setPostingStaff] = useState(false)
 
-    // 1️⃣ load gymId, subscribe gymData
+    // 1️⃣ — load gym by ownerUid
     useEffect(() => {
-        (async () => {
-            const u = await getDoc(doc(db, 'users', uid));
-            if (u.exists()) {
-                const gId = (u.data() as any).gymId;
-                setGymId(gId);
-                const unsub = onSnapshot(doc(db, 'gyms', gId), snap => {
-                    if (snap.exists()) {
-                        const d = snap.data();
-                        setGymData(d);
-                        // populate form
-                        setName(d.name || '');
-                        setEmail(d.email || '');
-                        setPhone(d.phone || '');
-                        setHours(d.hours || hours);
-                        // services
-                        const svs = Array.isArray(d.services) ? d.services : [];
-                        setServiceTypes(svs.map((k: string) => ({
-                            key: k,
-                            label: k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-                        })));
-                        // courts
-                        if (typeof d.courts === 'object') {
-                            setCourts(d.courts);
-                            setCourtTypes(Object.keys(d.courts).map(key => ({
-                                key,
-                                label: key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-                            })));
-                        }
-                    }
-                    setLoading(false);
-                });
-                return () => unsub();
-            }
-        })();
-    }, [uid]);
-
-    // 2️⃣ subscribe trainers
-    useEffect(() => {
-        if (!gymId) return;
-        const q = query(collection(db, 'trainers'), where('gymId', '==', gymId));
+        const q = query(
+            collection(db, 'gyms'),
+            where('ownerUid', '==', uid)
+        )
         const unsub = onSnapshot(q, snap => {
-            setStaffList(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-        });
-        return () => unsub();
-    }, [gymId]);
+            if (!snap.empty) {
+                const d = snap.docs[0]
+                setGymId(d.id)
+                const data = d.data()
+                setGymData(data)
 
-    // guard: don’t render until gymData loaded
+                // populate form
+                setName(data.name || '')
+                setEmail(data.email || '')
+                setPhone(data.phone || '')
+                setHours(data.hours || hours)
+
+                // services
+                const svs = Array.isArray(data.services) ? data.services : []
+                setServiceTypes(
+                    svs.map((k: string) => ({
+                        key: k,
+                        label: k.replace(/_/g, ' ')
+                            .replace(/\b\w/g, c => c.toUpperCase())
+                    }))
+                )
+
+                // courts
+                if (typeof data.courts === 'object') {
+                    setCourts(data.courts)
+                    setCourtTypes(
+                        Object.keys(data.courts).map(key => ({
+                            key,
+                            label: key.replace(/_/g, ' ')
+                                .replace(/\b\w/g, c => c.toUpperCase())
+                        }))
+                    )
+                }
+            }
+            setLoading(false)
+        })
+
+        return unsub
+    }, [uid])
+
+    // 2️⃣ — subscribe trainers
+    useEffect(() => {
+        if (!gymId) return
+        const q = query(
+            collection(db, 'trainers'),
+            where('gymId', '==', gymId)
+        )
+        return onSnapshot(q, snap => {
+            setStaffList(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })))
+        })
+    }, [gymId])
+
+    // guard until loaded
     if (loading || !gymData) {
         return (
             <View style={styles.center}>
                 <ActivityIndicator size="large" color="#fff" />
             </View>
-        );
+        )
     }
 
-    // time picker handlers
+    // Business Hours picker
     function openPicker(day: Day, mode: 'open' | 'close') {
-        setPickerDay(day);
-        setPickerMode(mode);
-        const existing = hours[day][mode];
+        setPickerDay(day)
+        setPickerMode(mode)
+        const existing = hours[day][mode]
         setTempTime(
             existing
                 ? new Date(`1970-01-01T${existing}:00`)
                 : new Date()
-        );
-        setPickerVisible(true);
+        )
+        setPickerVisible(true)
     }
     function onTimeChange(_: any, sel?: Date) {
-        if (sel) setTempTime(sel);
+        if (sel) setTempTime(sel)
     }
-    function cancelPicker() { setPickerVisible(false); }
+    function cancelPicker() {
+        setPickerVisible(false)
+    }
     function confirmPicker() {
-        const hh = tempTime.getHours().toString().padStart(2, '0');
-        const mm = tempTime.getMinutes().toString().padStart(2, '0');
+        const hh = String(tempTime.getHours()).padStart(2, '0')
+        const mm = String(tempTime.getMinutes()).padStart(2, '0')
         setHours(h => ({
             ...h,
             [pickerDay]: { ...h[pickerDay], [pickerMode]: `${hh}:${mm}` }
-        }));
-        setPickerVisible(false);
+        }))
+        setPickerVisible(false)
     }
 
-    // add service
+    // Add new service
     function addServiceType() {
-        const lab = newServiceLabel.trim();
-        if (!lab) return Alert.alert('Enter a service name');
-        const key = lab.toLowerCase().replace(/\s+/g, '_');
-        if (serviceTypes.some(s => s.key === key)) return Alert.alert('Already exists');
-        setServiceTypes(st => [...st, { key, label: lab }]);
-        setNewServiceLabel('');
+        const lab = newServiceLabel.trim()
+        if (!lab) return Alert.alert('Enter a service name')
+        const key = lab.toLowerCase().replace(/\s+/g, '_')
+        if (serviceTypes.some(s => s.key === key)) return Alert.alert('Already exists')
+        setServiceTypes(st => [...st, { key, label: lab }])
+        setNewServiceLabel('')
     }
-    // add court
+
+    // Add new court
     function addCourtType() {
-        const lab = newCourtLabel.trim();
-        if (!lab) return Alert.alert('Enter a court name');
-        const key = lab.toLowerCase().replace(/\s+/g, '_');
-        if (courtTypes.some(c => c.key === key)) return Alert.alert('Already exists');
-        setCourtTypes(ct => [...ct, { key, label: lab }]);
-        setCourts(c => ({ ...c, [key]: 0 }));
-        setNewCourtLabel('');
+        const lab = newCourtLabel.trim()
+        if (!lab) return Alert.alert('Enter a court name')
+        const key = lab.toLowerCase().replace(/\s+/g, '_')
+        if (courtTypes.some(c => c.key === key)) return Alert.alert('Already exists')
+        setCourtTypes(ct => [...ct, { key, label: lab }])
+        setCourts(c => ({ ...c, [key]: 0 }))
+        setNewCourtLabel('')
     }
-    // add staff
+
+    // Add new staff
     async function addStaff() {
         if (!newStaffName.trim() || !newStaffService) {
-            return Alert.alert('Name & service required');
+            return Alert.alert('Name & service required')
         }
-        setPostingStaff(true);
+        setPostingStaff(true)
         await addDoc(collection(db, 'trainers'), {
             gymId,
             name: newStaffName.trim(),
             service: newStaffService,
             createdAt: serverTimestamp()
-        });
-        setNewStaffName('');
-        setNewStaffService('');
-        setShowAddStaff(false);
-        setPostingStaff(false);
+        })
+        setNewStaffName('')
+        setNewStaffService('')
+        setShowAddStaff(false)
+        setPostingStaff(false)
     }
 
-    // save gym changes
+    // Save gym changes
     async function handleSave() {
         if (!name.trim() || !email.trim() || !phone.trim()) {
-            return Alert.alert('Name, email & phone required');
+            return Alert.alert('Name, email & phone required')
         }
-        setLoading(true);
+        setLoading(true)
         await updateDoc(doc(db, 'gyms', gymId!), {
             name: name.trim(),
             email: email.trim(),
@@ -204,41 +224,54 @@ export default function GymSettingsScreen() {
             services: serviceTypes.map(s => s.key),
             courts,
             updatedAt: serverTimestamp()
-        });
-        setEditing(false);
-        Alert.alert('Saved');
-        setLoading(false);
+        })
+        setEditing(false)
+        Alert.alert('Saved')
+        setLoading(false)
     }
 
-    // sign out
+    // Sign out
     async function handleSignOut() {
-        await signOut(auth);
-        router.replace('/login');
+        await signOut(auth)
+        router.replace('/login')
     }
 
     return (
-        <LinearGradient colors={['#312e81', '#4f46e5', '#7c3aed']} style={styles.bg}>
+        <LinearGradient
+            colors={['#312e81', '#4f46e5', '#7c3aed']}
+            style={styles.bg}
+        >
             <ScrollView contentContainerStyle={styles.container}>
                 <Text style={styles.title}>Gym Settings</Text>
 
                 {/* Gym Info */}
                 <View style={styles.row}>
-                    <MaterialCommunityIcons name="office-building" size={22} color="#6b7280" />
-                    {editing
-                        ? <TextInput
+                    <MaterialCommunityIcons
+                        name="office-building"
+                        size={22}
+                        color="#6b7280"
+                    />
+                    {editing ? (
+                        <TextInput
                             style={styles.input}
                             value={name}
                             onChangeText={setName}
                             placeholder="Gym Name"
                             placeholderTextColor="#9ca3af"
                         />
-                        : <Text style={styles.value}>{gymData.name}</Text>
-                    }
+                    ) : (
+                        <Text style={styles.value}>{gymData.name}</Text>
+                    )}
                 </View>
+
                 <View style={styles.row}>
-                    <MaterialCommunityIcons name="email-outline" size={22} color="#6b7280" />
-                    {editing
-                        ? <TextInput
+                    <MaterialCommunityIcons
+                        name="email-outline"
+                        size={22}
+                        color="#6b7280"
+                    />
+                    {editing ? (
+                        <TextInput
                             style={styles.input}
                             value={email}
                             onChangeText={setEmail}
@@ -247,13 +280,15 @@ export default function GymSettingsScreen() {
                             placeholderTextColor="#9ca3af"
                             autoCapitalize="none"
                         />
-                        : <Text style={styles.value}>{gymData.email}</Text>
-                    }
+                    ) : (
+                        <Text style={styles.value}>{gymData.email}</Text>
+                    )}
                 </View>
+
                 <View style={styles.row}>
                     <MaterialCommunityIcons name="phone" size={22} color="#6b7280" />
-                    {editing
-                        ? <TextInput
+                    {editing ? (
+                        <TextInput
                             style={styles.input}
                             value={phone}
                             onChangeText={setPhone}
@@ -261,30 +296,40 @@ export default function GymSettingsScreen() {
                             keyboardType="phone-pad"
                             placeholderTextColor="#9ca3af"
                         />
-                        : <Text style={styles.value}>{gymData.phone}</Text>
-                    }
+                    ) : (
+                        <Text style={styles.value}>{gymData.phone}</Text>
+                    )}
                 </View>
-                {editing
-                    ? <Pressable style={styles.btn} onPress={handleSave}>
-                        {loading
-                            ? <ActivityIndicator color="#fff" />
-                            : <Text style={styles.btnText}>Save Info</Text>
-                        }
+
+                {editing ? (
+                    <Pressable style={styles.btn} onPress={handleSave}>
+                        {loading ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : (
+                            <Text style={styles.btnText}>Save Info</Text>
+                        )}
                     </Pressable>
-                    : <Pressable style={styles.btn} onPress={() => setEditing(true)}>
+                ) : (
+                    <Pressable style={styles.btn} onPress={() => setEditing(true)}>
                         <Text style={styles.btnText}>Edit Info</Text>
                     </Pressable>
-                }
+                )}
 
                 {/* Business Hours */}
                 <Text style={styles.sectionTitle}>Business Hours</Text>
                 {DAYS.map(d => (
                     <View key={d} style={styles.hoursRow}>
                         <Text style={styles.dayLabel}>{d.slice(0, 3)}</Text>
-                        <Pressable style={styles.timeBtn} onPress={() => openPicker(d, 'open')}>
+                        <Pressable
+                            style={styles.timeBtn}
+                            onPress={() => openPicker(d, 'open')}
+                        >
                             <Text style={styles.timeTxt}>{hours[d].open || '--:--'}</Text>
                         </Pressable>
-                        <Pressable style={styles.timeBtn} onPress={() => openPicker(d, 'close')}>
+                        <Pressable
+                            style={styles.timeBtn}
+                            onPress={() => openPicker(d, 'close')}
+                        >
                             <Text style={styles.timeTxt}>{hours[d].close || '--:--'}</Text>
                         </Pressable>
                     </View>
@@ -341,9 +386,12 @@ export default function GymSettingsScreen() {
                     </View>
                 ))}
 
-                {/* Staff */}
+                {/* Staff Members */}
                 <Text style={styles.sectionTitle}>Staff Members</Text>
-                <Pressable style={[styles.btn, { marginBottom: 12 }]} onPress={() => setShowAddStaff(true)}>
+                <Pressable
+                    style={[styles.btn, { marginBottom: 12 }]}
+                    onPress={() => setShowAddStaff(true)}
+                >
                     <MaterialCommunityIcons name="account-plus" size={20} color="#fff" />
                     <Text style={[styles.btnText, { marginLeft: 8 }]}>Add Staff</Text>
                 </Pressable>
@@ -351,14 +399,19 @@ export default function GymSettingsScreen() {
                     <View key={s.id} style={styles.staffRow}>
                         <Text style={styles.staffName}>{s.name}</Text>
                         <Text style={styles.staffSvc}>{s.service}</Text>
-                        <Pressable onPress={async () => { await deleteDoc(doc(db, 'trainers', s.id)) }}>
+                        <Pressable
+                            onPress={() => deleteDoc(doc(db, 'trainers', s.id))}
+                        >
                             <MaterialCommunityIcons name="trash-can-outline" size={20} color="#f87171" />
                         </Pressable>
                     </View>
                 ))}
 
                 {/* Sign Out */}
-                <Pressable style={[styles.btn, styles.logoutBtn]} onPress={handleSignOut}>
+                <Pressable
+                    style={[styles.btn, styles.logoutBtn]}
+                    onPress={handleSignOut}
+                >
                     <MaterialCommunityIcons name="logout" size={20} color="#fff" />
                     <Text style={[styles.btnText, { marginLeft: 8 }]}>Sign Out</Text>
                 </Pressable>
@@ -416,32 +469,38 @@ export default function GymSettingsScreen() {
                             <Pressable style={styles.modalBtn} onPress={() => setShowAddStaff(false)}>
                                 <Text style={styles.modalBtnTxt}>Cancel</Text>
                             </Pressable>
-                            <Pressable style={[styles.modalBtn, postingStaff && { opacity: 0.5 }]} onPress={addStaff}>
-                                <Text style={styles.modalBtnTxt}>{postingStaff ? 'Adding…' : 'Add'}</Text>
+                            <Pressable
+                                style={[styles.modalBtn, postingStaff && { opacity: 0.5 }]}
+                                onPress={addStaff}
+                            >
+                                <Text style={styles.modalBtnTxt}>
+                                    {postingStaff ? 'Adding…' : 'Add'}
+                                </Text>
                             </Pressable>
                         </View>
                     </View>
                 </View>
             </Modal>
         </LinearGradient>
-    );
+    )
 }
 
-const PRIMARY = '#4f46e5';
-
+const PRIMARY = '#4f46e5'
 const styles = StyleSheet.create({
     bg: { flex: 1 },
     center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#312e81' },
     container: { padding: 24, paddingTop: 80, paddingBottom: 40 },
     title: { fontSize: 28, fontWeight: '700', color: '#fff', marginBottom: 24, textAlign: 'center' },
     row: {
-        flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.25)',
+        flexDirection: 'row', alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.25)',
         borderRadius: 18, paddingHorizontal: 16, marginBottom: 16, height: 48
     },
     input: { flex: 1, marginLeft: 8, color: '#fff', fontSize: 16 },
     value: { flex: 1, marginLeft: 8, color: '#fff', fontSize: 16 },
     btn: {
-        flexDirection: 'row', backgroundColor: PRIMARY, borderRadius: 18, paddingVertical: 14,
+        flexDirection: 'row', backgroundColor: PRIMARY,
+        borderRadius: 18, paddingVertical: 14,
         alignItems: 'center', justifyContent: 'center', marginBottom: 12
     },
     btnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
@@ -461,26 +520,43 @@ const styles = StyleSheet.create({
     },
     addBtn: { marginLeft: 8, backgroundColor: PRIMARY, padding: 8, borderRadius: 8 },
     servicesRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 },
-    tag: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, margin: 4 },
+    tag: {
+        backgroundColor: 'rgba(255,255,255,0.2)',
+        borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, margin: 4
+    },
     tagTxt: { color: '#fff' },
     courtRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-    courtPicker: { flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8, color: '#fff' },
+    courtPicker: {
+        flex: 1, backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 8, color: '#fff'
+    },
     staffRow: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-        backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 12, padding: 12, marginBottom: 8
+        backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 12,
+        padding: 12, marginBottom: 8
     },
     staffName: { color: '#fff', fontSize: 16, fontWeight: '600' },
     staffSvc: { color: '#e0e7ff' },
-    modalOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#0008', justifyContent: 'center', alignItems: 'center' },
-    pickerModal: { width: '80%', backgroundColor: '#312e81', borderRadius: 12, overflow: 'hidden' },
+    modalOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: '#0008', justifyContent: 'center', alignItems: 'center'
+    },
+    pickerModal: {
+        width: '80%', backgroundColor: '#312e81', borderRadius: 12, overflow: 'hidden'
+    },
     pickerActions: { flexDirection: 'row', backgroundColor: '#1f1f2e' },
     pickerActionBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
     pickerActionTxt: { color: '#fff', fontWeight: '600' },
-    modal: { width: '80%', backgroundColor: '#312e81', borderRadius: 12, padding: 16 },
+    modal: {
+        width: '80%', backgroundColor: '#312e81', borderRadius: 12, padding: 16
+    },
     modalTitle: { color: '#fff', fontSize: 18, fontWeight: '600', marginBottom: 12, textAlign: 'center' },
-    modalInput: { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8, padding: 8, color: '#fff', marginBottom: 12 },
+    modalInput: {
+        backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8,
+        padding: 8, color: '#fff', marginBottom: 12
+    },
     modalPicker: { backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff', marginBottom: 12 },
     modalBtns: { flexDirection: 'row', justifyContent: 'space-between' },
     modalBtn: { flex: 1, marginHorizontal: 4, backgroundColor: PRIMARY, borderRadius: 8, padding: 12, alignItems: 'center' },
     modalBtnTxt: { color: '#fff', fontWeight: '600' },
-});
+})

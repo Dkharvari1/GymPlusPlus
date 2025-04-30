@@ -37,7 +37,10 @@ const COURT_LABEL: Record<CourtType, string> = {
 };
 
 // Ensure these exactly match the icon names in MaterialCommunityIcons
-const COURT_ICON: Record<CourtType, React.ComponentProps<typeof MaterialCommunityIcons>['name']> = {
+const COURT_ICON: Record<
+    CourtType,
+    React.ComponentProps<typeof MaterialCommunityIcons>['name']
+> = {
     basketball: 'basketball',
     pickleball: 'tennis',
     racquetball: 'tennis-ball',
@@ -126,6 +129,7 @@ export default function AreasScreen() {
         );
     }
 
+    // render each court booking
     const renderItem = ({ item }: { item: any }) => {
         const start = (item.start as Timestamp).toDate();
         const time = start.toLocaleTimeString(undefined, {
@@ -133,6 +137,12 @@ export default function AreasScreen() {
             minute: '2-digit',
         });
         const type = item.type as CourtType;
+
+        // prettify "pickleball" → "Pickleball"
+        const courtLabel = type
+            .split('_')
+            .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+            .join(' ');
 
         return (
             <View style={styles.card}>
