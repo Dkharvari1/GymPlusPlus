@@ -149,18 +149,31 @@ export default function NutritionHome() {
     await updateDoc(doc(db, "users", uid, "days", dateId), { meals: arrayRemove(meals[idx]) });
   };
 
+
   const createDay = async () => {
     if (!uid) return;
-    const id  = buildDayId(pickerDate);
-    await setDoc(
-      doc(db, "users", uid, "days", id),
-      { calories: 0, protein: 0, water: 0, meals: [], createdAt: Timestamp.now() },
-      { merge: true },
-    );
-    setModalOpen(false);
-    setDays(cur => (cur.includes(id) ? cur : [id, ...cur]));
-    setDateId(id);
-  };
+    const id     = buildDayId(pickerDate);
+    const ref    = doc(db, "users", uid, "days", id);
+
+    // 1) check if it already exists
+    const snap   = await getDoc(ref);
+    if (!snap.exists()) {
+      // 2) only seed defaults once
+      await setDoc(ref, {
+        calories:   0,
+        protein:    0,
+        water:      0,
+        meals:      [],
+        createdAt:  Timestamp.now(),
+      });
+    }
+
+  // 3) now just switch the UI
+  setModalOpen(false);
+  setDays(cur => (cur.includes(id) ? cur : [id, ...cur]));
+  setDateId(id);
+};
+
 
   const confirmDeleteDay = () => {
     if (!uid || !dateId) return;
