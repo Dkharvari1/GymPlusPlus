@@ -61,7 +61,7 @@ export default function CommunityScreen() {
 
   const listRef = useRef<FlatList<Msg>>(null);
 
-  /* live user doc -> gymId & myRole */
+  /* live user doc → gymId & myRole */
   useEffect(() => {
     const unsub = onSnapshot(doc(db, 'users', user.uid), s => {
       const d = s.data() as any;
@@ -83,7 +83,10 @@ export default function CommunityScreen() {
 
   /* live messages (read-only) */
   useEffect(() => {
-    if (!gymId) return;
+    /* whenever gym changes, clear chat & reset spinner */
+    setMsgs([]);
+    if (!gymId) { setLoad(false); return; }
+    setLoad(true);
 
     const q = query(
       collection(db, 'gyms', gymId, 'messages'),
@@ -104,7 +107,7 @@ export default function CommunityScreen() {
       },
       err => {
         console.warn('messages listener', err.code, err.message);
-        setLoad(false);  // avoid spinner freeze
+        setLoad(false);
       }
     );
     return unsub;
