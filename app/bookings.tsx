@@ -16,6 +16,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {
     collection,
     query,
@@ -26,9 +27,9 @@ import {
     doc,
     Timestamp,
     serverTimestamp,
+    deleteDoc,
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebaseConfig';
-import DateTimePicker from '@react-native-community/datetimepicker';
 
 const { width } = Dimensions.get('window');
 const BTN = (width - 64) / 2;
@@ -46,11 +47,21 @@ function prettify(key?: string): string {
         .map(w => w[0].toUpperCase() + w.slice(1))
         .join(' ');
 }
-
-function getLabel(key?: string): string {
+function getLabel(key?: string | null): string {
     if (!key) return '';
     return BUILT_IN_LABELS[key] ?? prettify(key);
 }
+
+// Weekday names for business hours lookup
+const WEEK_DAYS = [
+    'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+] as const;
 
 export default function BookingsScreen() {
     const router = useRouter();
@@ -63,15 +74,18 @@ export default function BookingsScreen() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    // New: map from staffId -> name
+    // Staff names cache
     const [staffNames, setStaffNames] = useState<Record<string, string>>({});
 
-    // booking flow
+    // Booking flow
     const [selService, setSelService] = useState<string | null>(null);
     const [staffList, setStaffList] = useState<any[]>([]);
     const [selStaff, setSelStaff] = useState<string | null>(null);
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [tempDate, setTempDate] = useState(new Date());
+
+    // All existing bookings for the chosen instructor
+    const [staffBookings, setStaffBookings] = useState<any[]>([]);
 
     // 1️⃣ Load gymId from user
     useEffect(() => {
@@ -100,9 +114,10 @@ export default function BookingsScreen() {
             .map((s: any) => (typeof s === 'string' ? s : s.key))
             .filter((k: any) => typeof k === 'string');
 
-        const courtsObj = gymData.courts && typeof gymData.courts === 'object'
-            ? (gymData.courts as Record<string, number>)
-            : {};
+        const courtsObj =
+            gymData.courts && typeof gymData.courts === 'object'
+                ? (gymData.courts as Record<string, number>)
+                : {};
         const courtKeys = Object.entries(courtsObj)
             .filter(([, cnt]) => cnt > 0)
             .map(([k]) => k);
@@ -120,7 +135,11 @@ export default function BookingsScreen() {
             q,
             snap => {
                 const arr = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
-                arr.sort((a, b) => (b.start as Timestamp).seconds - (a.start as Timestamp).seconds);
+                arr.sort(
+                    (a, b) =>
+                        (b.start as Timestamp).toDate().getTime() -
+                        (a.start as Timestamp).toDate().getTime()
+                );
                 setList(arr);
                 setLoading(false);
             },
@@ -133,7 +152,7 @@ export default function BookingsScreen() {
         return () => unsub();
     }, [uid]);
 
-    // ⚡️ When bookings change, fetch each booked staff’s name
+    // ⚡️ Fetch each booked staff’s name
     useEffect(() => {
         const ids = Array.from(new Set(list.map(b => b.staffId).filter(Boolean)));
         if (ids.length === 0) {
@@ -155,21 +174,17 @@ export default function BookingsScreen() {
 
     // 5️⃣ Load trainers for a staff-based service
     useEffect(() => {
-        if (
-            !gymId ||
-            !selService ||
-            !Array.isArray(gymData?.services)
-        ) {
+        if (!gymId || !selService || !Array.isArray(gymData?.services)) {
             setStaffList([]);
             return;
         }
-        const svcKeys = (gymData.services as any[]).map(s => (typeof s === 'string' ? s : s.key));
+        const svcKeys = (gymData.services as any[]).map(s =>
+            typeof s === 'string' ? s : s.key
+        );
         if (!svcKeys.includes(selService)) {
             setStaffList([]);
             return;
         }
-
-        // ← query on "service" field
         const q = query(
             collection(db, 'trainers'),
             where('gymId', '==', gymId),
@@ -181,12 +196,28 @@ export default function BookingsScreen() {
         return () => unsub();
     }, [gymData, gymId, selService]);
 
+    // Subscribe to that instructor’s existing bookings
+    useEffect(() => {
+        if (!selStaff || !gymId) {
+            setStaffBookings([]);
+            return;
+        }
+        const q = query(
+            collection(db, 'bookings'),
+            where('gymId', '==', gymId),
+            where('staffId', '==', selStaff)
+        );
+        const unsub = onSnapshot(q, snap => {
+            setStaffBookings(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+        });
+        return () => unsub();
+    }, [selStaff, gymId]);
+
     // 6️⃣ Start booking
     function startBooking(type: string) {
         setSelService(type);
         setSelStaff(null);
         setTempDate(new Date());
-
         const svcKeys = Array.isArray(gymData?.services)
             ? (gymData.services as any[]).map(s => (typeof s === 'string' ? s : s.key))
             : [];
@@ -211,10 +242,58 @@ export default function BookingsScreen() {
         if (sel) setTempDate(sel);
     }
 
+    // Compute gym hours bounds & label
+    const dayHours = useMemo(() => {
+        if (!gymData?.hours) return null;
+        const dayName = WEEK_DAYS[tempDate.getDay()];
+        const h = (gymData.hours as Record<string, { open: string; close: string }>)[
+            dayName
+        ];
+        if (!h?.open || !h?.close) return null;
+        const [oh, om] = h.open.split(':').map(Number);
+        const [ch, cm] = h.close.split(':').map(Number);
+        const min = new Date(tempDate);
+        min.setHours(oh, om, 0, 0);
+        const max = new Date(tempDate);
+        max.setHours(ch, cm, 0, 0);
+        return { min, max, label: `${h.open} – ${h.close}` };
+    }, [gymData?.hours, tempDate]);
+
     // 9️⃣ Confirm booking
     async function confirmBooking() {
         setShowDatePicker(false);
         if (!selService || !gymId) return;
+
+        // enforce gym hours
+        if (dayHours) {
+            const ms = tempDate.getTime();
+            if (ms < dayHours.min.getTime() || ms >= dayHours.max.getTime()) {
+                Alert.alert(
+                    'Closed',
+                    `Please pick a time within gym hours: ${dayHours.label}`
+                );
+                return;
+            }
+        }
+
+        // conflict check for instructor
+        if (selStaff) {
+            const newStartMs = tempDate.getTime();
+            const newEndMs = new Date(newStartMs + 60 * 60 * 1000).getTime();
+            const conflict = staffBookings.some(b => {
+                const bs = (b.start as Timestamp).toDate().getTime();
+                const be = (b.end as Timestamp).toDate().getTime();
+                return newStartMs < be && bs < newEndMs;
+            });
+            if (conflict) {
+                Alert.alert(
+                    'Unavailable',
+                    'That instructor is already booked at the selected time.'
+                );
+                return;
+            }
+        }
+
         const start = tempDate;
         const end = new Date(start.getTime() + 60 * 60 * 1000);
         try {
@@ -236,6 +315,30 @@ export default function BookingsScreen() {
         }
     }
 
+    // 🔟 Cancel a booking
+    const handleCancelBooking = (id: string) => {
+        Alert.alert(
+            'Cancel booking?',
+            'Are you sure you want to cancel this booking?',
+            [
+                { text: 'No', style: 'cancel' },
+                {
+                    text: 'Yes, cancel',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await deleteDoc(doc(db, 'bookings', id));
+                            Alert.alert('Booking cancelled');
+                        } catch (err: any) {
+                            console.error(err);
+                            Alert.alert('Error', 'Could not cancel booking');
+                        }
+                    },
+                },
+            ]
+        );
+    };
+
     return (
         <LinearGradient
             colors={['#312e81', '#4f46e5']}
@@ -246,16 +349,12 @@ export default function BookingsScreen() {
             <ScrollView contentContainerStyle={styles.scrollContainer}>
                 <SafeAreaView style={styles.header}>
                     <Pressable style={styles.back} onPress={() => router.back()}>
-                        <MaterialCommunityIcons
-                            name="chevron-left"
-                            size={28}
-                            color="#fff"
-                        />
+                        <MaterialCommunityIcons name="chevron-left" size={28} color="#fff" />
                     </Pressable>
                     <Text style={styles.title}>Book a Session</Text>
                 </SafeAreaView>
 
-                {/* Options */}
+                {/* 1️⃣ pick service / court */}
                 <View style={styles.row}>
                     {options.map(o => (
                         <Pressable
@@ -276,7 +375,7 @@ export default function BookingsScreen() {
                     ))}
                 </View>
 
-                {/* Staff pick */}
+                {/* 2️⃣ pick staff (if service) */}
                 {selService &&
                     Array.isArray(gymData?.services) &&
                     (gymData.services as any[])
@@ -313,7 +412,7 @@ export default function BookingsScreen() {
                         </View>
                     )}
 
-                {/* Date/time picker */}
+                {/* 3️⃣ date+time picker */}
                 {showDatePicker && (
                     <View style={styles.pickerContainer}>
                         <DateTimePicker
@@ -325,6 +424,9 @@ export default function BookingsScreen() {
                             onChange={onDateChange}
                             style={styles.picker}
                         />
+                        {dayHours && (
+                            <Text style={styles.hoursInfo}>Gym hours: {dayHours.label}</Text>
+                        )}
                         <View style={styles.pickerButtons}>
                             <Pressable
                                 style={styles.pickerBtn}
@@ -332,17 +434,14 @@ export default function BookingsScreen() {
                             >
                                 <Text>Cancel</Text>
                             </Pressable>
-                            <Pressable
-                                style={styles.pickerBtn}
-                                onPress={confirmBooking}
-                            >
+                            <Pressable style={styles.pickerBtn} onPress={confirmBooking}>
                                 <Text>Confirm</Text>
                             </Pressable>
                         </View>
                     </View>
                 )}
 
-                {/* Your Bookings */}
+                {/* 4️⃣ Your bookings */}
                 <Text style={[styles.sectionTitle, { marginTop: 24 }]}>
                     Your Bookings
                 </Text>
@@ -362,7 +461,7 @@ export default function BookingsScreen() {
                                     size={22}
                                     color="#4f46e5"
                                 />
-                                <View style={{ marginLeft: 10 }}>
+                                <View style={{ flex: 1, marginLeft: 10 }}>
                                     <Text style={styles.itemTitle}>{item.title}</Text>
                                     <Text style={styles.itemSub}>{date.toLocaleString()}</Text>
                                     {item.staffId && (
@@ -371,6 +470,16 @@ export default function BookingsScreen() {
                                         </Text>
                                     )}
                                 </View>
+                                <Pressable
+                                    onPress={() => handleCancelBooking(item.id)}
+                                    style={styles.cancelBtn}
+                                >
+                                    <MaterialCommunityIcons
+                                        name="cancel"
+                                        size={24}
+                                        color="#ef4444"
+                                    />
+                                </Pressable>
                             </View>
                         );
                     })
@@ -437,6 +546,11 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
     },
     picker: { width: '100%' },
+    hoursInfo: {
+        color: '#fff',
+        textAlign: 'center',
+        marginVertical: 8,
+    },
     pickerButtons: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -478,4 +592,9 @@ const styles = StyleSheet.create({
     },
     itemTitle: { fontWeight: '600', color: '#1e293b' },
     itemSub: { color: '#64748b', fontSize: 13, marginTop: 2 },
+
+    cancelBtn: {
+        padding: 8,
+        marginLeft: 12,
+    },
 });
