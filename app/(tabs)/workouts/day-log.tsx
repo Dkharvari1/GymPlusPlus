@@ -1,69 +1,61 @@
 // app/(tabs)/workouts/day-log.tsx
 import React, { useEffect, useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  ActivityIndicator,
-  FlatList,
+  View, Text, StyleSheet, Pressable, ActivityIndicator, FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { AntDesign, MaterialCommunityIcons } from '@expo/vector-icons';
 import { db, auth } from '../../../lib/firebaseConfig';
-import { doc, getDoc, updateDoc, arrayRemove } from 'firebase/firestore';
+import {
+  doc, updateDoc, arrayRemove, onSnapshot,
+} from 'firebase/firestore';
 
 /**
- * Shows all workout entries logged for a single day.
- * (Guard added — 29 Apr 2025 — so older entries that lack `unit`
- * won’t crash when we try to call toUpperCase().)
+ * Live view of all workout entries for one day.
  */
 export default function DayLog() {
   const { day } = useLocalSearchParams<{ day?: string }>();
   const uid = auth.currentUser?.uid;
   const [logs, setLogs] = useState<any[] | null>(null);
 
-  /* fetch once */
+  /* realtime listener */
   useEffect(() => {
     if (!uid || !day) return;
-    (async () => {
-      const snap = await getDoc(doc(db, 'users', uid, 'days', day));
-      setLogs(snap.exists() ? snap.data().workouts ?? [] : []);
-    })();
+    const off = onSnapshot(doc(db, 'users', uid, 'days', day), s => {
+      setLogs(s.exists() ? s.data().workouts ?? [] : []);
+    });
+    return off;
   }, [uid, day]);
 
-  /* delete helper */
   const deleteEntry = async (entry: any) => {
     if (!uid || !day) return;
     await updateDoc(doc(db, 'users', uid, 'days', day), {
       workouts: arrayRemove(entry),
     });
-    setLogs((cur) => cur!.filter((e) => e !== entry));
   };
 
-  /* loading */
   if (!logs) {
     return (
-      <SafeAreaView style={s.center}>
+      <SafeAreaView style={styles.center}>
         <ActivityIndicator color="#4f46e5" />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={s.safe}>
+    <SafeAreaView style={styles.safe}>
       {/* header */}
-      <View style={s.header}>
-        <Pressable onPress={() => router.back()} style={s.iconBtn}>
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()} style={styles.iconBtn}>
           <AntDesign name="arrowleft" size={22} color="#fff" />
         </Pressable>
-        <Text style={s.h1}>Logged Workouts • {day}</Text>
+        <Text style={styles.h1}>Logged Workouts • {day}</Text>
       </View>
 
-      {/* content */}
+      {/* list */}
       {logs.length === 0 ? (
-        <Text style={s.empty}>No workouts logged yet.</Text>
+        <Text style={styles.empty}>No workouts logged yet.</Text>
       ) : (
         <FlatList
           data={logs}
@@ -71,17 +63,16 @@ export default function DayLog() {
           contentContainerStyle={{ paddingBottom: 40 }}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           renderItem={({ item }) => {
-            /* ── safe display helpers ─────────────────────── */
             const weightTxt =
               typeof item.weight === 'number' ? item.weight : item.weight ?? '?';
             const unitTxt =
               typeof item.unit === 'string' ? item.unit.toUpperCase() : '';
 
             return (
-              <View style={s.card}>
+              <View style={styles.card}>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.name}>{item.name}</Text>
-                  <Text style={s.meta}>
+                  <Text style={styles.name}>{item.name}</Text>
+                  <Text style={styles.meta}>
                     {item.sets} × {item.reps} — {weightTxt} {unitTxt}
                   </Text>
                 </View>
@@ -102,8 +93,11 @@ export default function DayLog() {
   );
 }
 
+/* styles unchanged */
+const styles = StyleSheet.create({
+
+
 /* ── styles ─────────────────────────────────────────────── */
-const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#f5f6ff', padding: 16 },
   center: {
     flex: 1,
