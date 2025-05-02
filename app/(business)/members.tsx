@@ -1,329 +1,170 @@
 // app/(business)/members.tsx
-
-import React, { useEffect, useState, useMemo } from 'react';
+//
+// Shows the roster of members for this gym **and** provides
+// a floating action button that opens the QR scanner.
+//
+import React, { useEffect, useState } from 'react';
 import {
-    View,
-    Text,
-    StyleSheet,
-    FlatList,
-    ActivityIndicator,
-    Alert,
-    Pressable,
-    TextInput,
-    Modal,
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  Pressable,
+  ActivityIndicator,
+  TextInput,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { auth, db } from '../../lib/firebaseConfig';
+import { useRouter } from 'expo-router';
+import { MaterialCommunityIcons, Feather } from '@expo/vector-icons';
+
 import {
-    collection,
-    query,
-    where,
-    onSnapshot,
-    updateDoc,
-    getDoc,
-    doc,
+  collection,
+  query,
+  where,
+  onSnapshot,
 } from 'firebase/firestore';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Picker } from '@react-native-picker/picker';
+import { auth, db } from '../../lib/firebaseConfig';
 
-export default function MembersScreen() {
-    const uid = auth.currentUser!.uid;
+type Member = {
+  id: string;
+  username?: string;
+  email?: string;
+  selectedPackage?: { name: string };
+};
 
-    // ── Core state
-    const [gymId, setGymId] = useState<string | null>(null);
-    const [membershipPackages, setMembershipPackages] = useState<
-        { name: string; price: number; description: string }[]
-    >([]);
-    const [members, setMembers] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [searchTerm, setSearchTerm] = useState('');
+export default function Members() {
+  const router  = useRouter();
+  const uid     = auth.currentUser?.uid!;
+  const [gymId, setGymId] = useState<string | null>(null);
 
-    // ── Modal for package upgrades
-    const [upgradeModalVisible, setUpgradeModalVisible] = useState(false);
-    const [memberToUpgrade, setMemberToUpgrade] = useState<any | null>(null);
-    const [selectedPackage, setSelectedPackage] = useState<string>('');
+  /* 1) resolve this owner’s gym id */
+  useEffect(() => {
+    const q = query(collection(db, 'gyms'), where('ownerUid', '==', uid));
+    const unsub = onSnapshot(q, snap => setGymId(snap.empty ? null : snap.docs[0].id));
+    return unsub;
+  }, [uid]);
 
-    // ① Fetch *your* gym (business owner) and its packages
-    useEffect(() => {
-        const q = query(
-            collection(db, 'gyms'),
-            where('ownerUid', '==', uid)
-        );
-        const unsub = onSnapshot(
-            q,
-            snap => {
-                if (!snap.empty) {
-                    const d = snap.docs[0];
-                    const data = d.data() as any;
-                    setGymId(d.id);
-                    setMembershipPackages(data.membershipPackages ?? []);
-                } else {
-                    console.warn('No gym found for owner', uid);
-                }
-                setLoading(false);
-            },
-            err => {
-                console.warn('Gym fetch error', err);
-                setLoading(false);
-            }
-        );
-        return () => unsub();
-    }, [uid]);
-
-    // ② Subscribe to all members of that gym
-    useEffect(() => {
-        if (!gymId) return;
-        setLoading(true);
-        const q = query(
-            collection(db, 'users'),
-            where('gymId', '==', gymId)
-        );
-        const unsub = onSnapshot(
-            q,
-            snap => {
-                setMembers(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-                setLoading(false);
-            },
-            err => {
-                console.warn('Members fetch error', err);
-                setLoading(false);
-            }
-        );
-        return () => unsub();
-    }, [gymId]);
-
-    // ③ Filter by search term
-    const filtered = useMemo(() => {
-        const t = searchTerm.trim().toLowerCase();
-        if (!t) return members;
-        return members.filter(m => {
-            const name = (m.displayName ?? '').toLowerCase();
-            const email = (m.email ?? '').toLowerCase();
-            return name.includes(t) || email.includes(t);
-        });
-    }, [members, searchTerm]);
-
-    // ④ Cancel membership
-    const handleCancel = (member: any) => {
-        Alert.alert(
-            'Cancel membership?',
-            `Remove ${member.displayName || 'this member'} from your gym?`,
-            [
-                { text: 'No', style: 'cancel' },
-                {
-                    text: 'Yes, cancel',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            await updateDoc(doc(db, 'users', member.id), {
-                                gymId: null,
-                                gymName: null,
-                                package: null,
-                            });
-                            Alert.alert('Membership cancelled');
-                        } catch (err: any) {
-                            console.error('Failed to cancel membership', err);
-                            Alert.alert('Error', err.message);
-                        }
-                    },
-                },
-            ]
-        );
-    };
-
-    // ⑤ Open upgrade modal
-    const openUpgrade = (member: any) => {
-        setMemberToUpgrade(member);
-        setSelectedPackage(member.package ?? '');
-        setUpgradeModalVisible(true);
-    };
-
-    // ⑥ Confirm package upgrade
-    const confirmUpgrade = async () => {
-        if (!memberToUpgrade) return;
-        try {
-            await updateDoc(doc(db, 'users', memberToUpgrade.id), {
-                package: selectedPackage,
-            });
-            setUpgradeModalVisible(false);
-            setMemberToUpgrade(null);
-            Alert.alert('Package updated');
-        } catch (err: any) {
-            console.error('Failed to upgrade package', err);
-            Alert.alert('Error', err.message);
-        }
-    };
-
-    // Loading spinner
-    if (loading) {
-        return (
-            <LinearGradient
-                colors={['#312e81', '#4f46e5', '#7c3aed']}
-                style={styles.bg}
-            >
-                <ActivityIndicator size="large" color="#fff" style={{ marginTop: 60 }} />
-            </LinearGradient>
-        );
-    }
-
-    return (
-        <LinearGradient
-            colors={['#312e81', '#4f46e5', '#7c3aed']}
-            style={styles.bg}
-        >
-            <Text style={styles.title}>Members</Text>
-
-            {/* Search bar */}
-            <View style={styles.searchWrap}>
-                <MaterialCommunityIcons name="magnify" size={20} color="#9ca3af" />
-                <TextInput
-                    style={styles.searchInput}
-                    placeholder="Search members..."
-                    placeholderTextColor="#9ca3af"
-                    value={searchTerm}
-                    onChangeText={setSearchTerm}
-                />
-            </View>
-
-            <FlatList
-                data={filtered}
-                keyExtractor={item => item.id}
-                contentContainerStyle={styles.list}
-                ListEmptyComponent={() => (
-                    <Text style={styles.empty}>
-                        {searchTerm ? 'No matching members.' : 'No members yet.'}
-                    </Text>
-                )}
-                renderItem={({ item }) => (
-                    <View style={styles.item}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.name}>{item.displayName || 'User'}</Text>
-                            <Text style={styles.email}>{item.email}</Text>
-                            <Text style={styles.pkg}>
-                                Package: {item.package ?? 'None'}
-                            </Text>
-                        </View>
-                        <View style={styles.actions}>
-                            <Pressable onPress={() => openUpgrade(item)} style={styles.actionBtn}>
-                                <MaterialCommunityIcons
-                                    name="arrow-up-bold"
-                                    size={20}
-                                    color="#4f46e5"
-                                />
-                            </Pressable>
-                            <Pressable onPress={() => handleCancel(item)} style={styles.actionBtn}>
-                                <MaterialCommunityIcons
-                                    name="account-cancel"
-                                    size={20}
-                                    color="#ef4444"
-                                />
-                            </Pressable>
-                        </View>
-                    </View>
-                )}
-            />
-
-            {/* Upgrade modal */}
-            <Modal visible={upgradeModalVisible} transparent animationType="slide">
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modal}>
-                        <Text style={styles.modalTitle}>Upgrade Package</Text>
-                        <Picker
-                            selectedValue={selectedPackage}
-                            onValueChange={v => setSelectedPackage(v)}
-                            style={styles.picker}
-                        >
-                            <Picker.Item label="None" value="" />
-                            {membershipPackages.map((p, i) => (
-                                <Picker.Item
-                                    key={i}
-                                    label={`${p.name} — $${p.price}`}
-                                    value={p.name}
-                                />
-                            ))}
-                        </Picker>
-                        <View style={styles.modalRow}>
-                            <Pressable
-                                onPress={() => setUpgradeModalVisible(false)}
-                                style={styles.modalBtn}
-                            >
-                                <Text style={styles.modalBtnTxt}>Cancel</Text>
-                            </Pressable>
-                            <Pressable
-                                onPress={confirmUpgrade}
-                                style={[styles.modalBtn, !memberToUpgrade && { opacity: 0.5 }]}
-                            >
-                                <Text style={styles.modalBtnTxt}>Confirm</Text>
-                            </Pressable>
-                        </View>
-                    </View>
-                </View>
-            </Modal>
-        </LinearGradient>
+  /* 2) live roster */
+  const [members, setMembers] = useState<Member[] | null>(null);
+  useEffect(() => {
+    if (!gymId) return;
+    const q = query(collection(db, 'users'), where('gymId', '==', gymId));
+    const unsub = onSnapshot(q, snap =>
+      setMembers(snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })))
     );
+    return unsub;
+  }, [gymId]);
+
+  const [search, setSearch] = useState('');
+
+  const filtered = members?.filter(m =>
+    m.username?.toLowerCase().includes(search.toLowerCase()) ||
+    m.email?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  /* loading */
+  if (!members) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#7c3aed" />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.bg}>
+      <Text style={styles.title}>Members</Text>
+
+      <TextInput
+        style={styles.search}
+        placeholder="Search members..."
+        placeholderTextColor="#9ca3af"
+        value={search}
+        onChangeText={setSearch}
+      />
+
+      <FlatList
+        data={filtered ?? []}
+        keyExtractor={m => m.id}
+        contentContainerStyle={{ paddingBottom: 120 }}
+        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+        renderItem={({ item }) => (
+          <View style={styles.card}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.name}>{item.username ?? 'User'}</Text>
+              <Text style={styles.email}>{item.email}</Text>
+              <Text style={styles.pkg}>
+                Package:{' '}
+                {item.selectedPackage?.name ?? 'None'}
+              </Text>
+            </View>
+            <Feather name="chevron-right" size={20} color="#94a3b8" />
+          </View>
+        )}
+      />
+
+      {/* ─────────── FAB: open scanner ─────────── */}
+      {gymId && (
+        <Pressable
+          style={styles.fab}
+          android_ripple={{ color: '#c7d2fe', radius: 24 }}
+             onPress={() => router.push('/scan-user')}
+        >
+          <MaterialCommunityIcons
+            name="qrcode-scan"
+            size={28}
+            color="#4f46e5"
+          />
+        </Pressable>
+      )}
+    </View>
+  );
 }
 
+/* ── styles ───────────────────────────────────────────────── */
 const styles = StyleSheet.create({
-    bg: { flex: 1, paddingTop: 60 },
-    title: {
-        color: '#fff',
-        fontSize: 24,
-        fontWeight: '700',
-        textAlign: 'center',
-        marginBottom: 16,
-    },
-    searchWrap: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginHorizontal: 24,
-        marginBottom: 12,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        borderRadius: 18,
-        paddingHorizontal: 12,
-    },
-    searchInput: {
-        flex: 1,
-        color: '#fff',
-        paddingVertical: 8,
-        marginLeft: 8,
-    },
-    list: { paddingHorizontal: 24, paddingBottom: 40 },
-    item: {
-        flexDirection: 'row',
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        marginBottom: 12,
-        borderRadius: 18,
-        padding: 16,
-    },
-    name: { fontSize: 16, fontWeight: '600', color: '#fff' },
-    email: { fontSize: 14, color: '#e0e7ff', marginTop: 4 },
-    pkg: { fontSize: 14, color: '#c7d2fe', marginTop: 4, fontStyle: 'italic' },
-    actions: { flexDirection: 'row', alignItems: 'center' },
-    actionBtn: { marginLeft: 12 },
+  bg: { flex: 1, backgroundColor: '#eef1ff' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-    empty: {
-        color: '#e0e7ff',
-        fontStyle: 'italic',
-        textAlign: 'center',
-        marginTop: 40,
-    },
+  title: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#312e81',
+    marginTop: 52,
+    marginBottom: 14,
+    alignSelf: 'center',
+  },
+  search: {
+    marginHorizontal: 16,
+    marginBottom: 18,
+    backgroundColor: '#c7d2fe50',
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    color: '#111827',
+  },
 
-    /* Modal */
-    modalOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: '#0008',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    modal: {
-        width: '80%',
-        backgroundColor: '#312e81',
-        borderRadius: 12,
-        padding: 16,
-    },
-    modalTitle: { color: '#fff', fontSize: 18, fontWeight: '600', marginBottom: 12, textAlign: 'center' },
-    picker: { backgroundColor: 'rgba(255,255,255,0.1)', color: '#fff', marginBottom: 12 },
-    modalRow: { flexDirection: 'row', justifyContent: 'space-between' },
-    modalBtn: { flex: 1, marginHorizontal: 4, backgroundColor: '#4f46e5', borderRadius: 8, padding: 12, alignItems: 'center' },
-    modalBtnTxt: { color: '#fff', fontWeight: '600' },
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#7c3aed20',
+    marginHorizontal: 16,
+    borderRadius: 14,
+    padding: 16,
+  },
+  name: { color: '#1e1b4b', fontWeight: '600' },
+  email: { color: '#475569', fontSize: 12, marginTop: 2 },
+  pkg: { color: '#475569', fontSize: 12, fontStyle: 'italic', marginTop: 2 },
+
+  fab: {
+    position: 'absolute',
+    bottom: 28,
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 6,
+  },
 });
